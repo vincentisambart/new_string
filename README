@@ -1,0 +1,14 @@
+This is what should become the MacRuby String and Encoding classes.
+
+It's still in a very early state so nearly nothing works.
+
+It's available under the same licence as MacRuby.
+
+unicode/*.h are the headers for the version of ICU included in Mac OS X 10.5
+(ICU 3.6).
+
+objc.h and bs.h are copied directly from MacRuby.
+
+To build it: macruby extconf.rb && make
+
+The classes defined by this extension are MRString and MREncoding.
