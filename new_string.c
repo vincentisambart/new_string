@@ -247,9 +247,9 @@ static void create_encodings(void)
     add_encoding(ENCODING_UTF32LE,   "UTF-32LE",    4, false, "UCS-4LE", NULL);
     add_encoding(ENCODING_ISO8859_1, "ISO-8859-1",  1, true,  "ISO8859-1", NULL);
     // FIXME: the ICU conversion tables do not seem to match Ruby's Japanese conversion tables
-    add_encoding(ENCODING_EUCJP,     "EUC-JP",      0, true,  "eucJP", NULL);
-    add_encoding(ENCODING_SJIS,      "Shift_JIS",   0, true, "SJIS", NULL);
-    add_encoding(ENCODING_CP932,     "Windows-31J", 0, true, "CP932", "csWindows31J", NULL);
+    //add_encoding(ENCODING_EUCJP,     "EUC-JP",      0, true,  "eucJP", NULL);
+    //add_encoding(ENCODING_SJIS,      "Shift_JIS",   0, true, "SJIS", NULL);
+    //add_encoding(ENCODING_CP932,     "Windows-31J", 0, true, "CP932", "csWindows31J", NULL);
 
     default_external = encodings[ENCODING_UTF8];
     default_internal = encodings[ENCODING_UTF16LE];
@@ -308,6 +308,7 @@ typedef struct {
 // do not forget to close the converter
 // before leaving the function
 #define USE_CONVERTER(cnv, str) \
+    assert(str->enc->converter != NULL); \
     char cnv##_buffer[U_CNV_SAFECLONE_BUFFERSIZE]; \
     UErrorCode cnv##_err = U_ZERO_ERROR; \
     int32_t cnv##_buffer_size = U_CNV_SAFECLONE_BUFFERSIZE; \
@@ -365,7 +366,6 @@ static string_t *str_replace(string_t *self, VALUE arg)
 	self->is_utf16 = true;
 	if (self->len != 0) {
 	    GC_WB(&self->data.uchars, xmalloc(self->len * sizeof(UChar)));
-	    assert(self->data.uchars != NULL);
 	    CFStringGetCharacters((CFStringRef)arg, CFRangeMake(0, self->len), self->data.uchars);
 	}
     }
@@ -377,12 +377,10 @@ static string_t *str_replace(string_t *self, VALUE arg)
 	if (self->len != 0) {
 	    if (str->is_utf16) {
 		GC_WB(self->data.uchars, xmalloc(self->len * sizeof(UChar)));
-		assert(self->data.uchars != NULL);
 		memcpy(self->data.uchars, str->data.uchars, self->len * sizeof(UChar));
 	    }
 	    else {
 		GC_WB(self->data.bytes, xmalloc(self->len));
-		assert(self->data.bytes != NULL);
 		memcpy(self->data.bytes, str->data.bytes, self->len);
 	    }
 	}
