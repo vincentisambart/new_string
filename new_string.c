@@ -22,7 +22,6 @@
 
 // TODO:
 // - use rb_usascii_str_new_cstr instead of rb_str_new2
-// - free strings memory
 
 VALUE rb_cMREncoding;
 
@@ -343,19 +342,12 @@ extern VALUE rb_cByteString;
 
 static string_t *str_replace(string_t *self, VALUE arg)
 {
-    if (self->data.bytes != NULL) {
-	free(self->data.bytes);
-	self->data.bytes = NULL;
-	self->len = 0;
-	self->capa = 0;
-    }
-
     VALUE klass = OBJC_CLASS(arg);
     if (klass == rb_cByteString) {
 	self->enc = encodings[ENCODING_BINARY];
 	self->capa = self->len = rb_bytestring_length(arg);
 	if (self->len != 0) {
-	    self->data.bytes = malloc(self->len);
+	    GC_WB(&self->data.bytes, xmalloc(self->len));
 	    assert(self->data.bytes != NULL);
 	    memcpy(self->data.bytes, rb_bytestring_byte_pointer(arg), self->len);
 	}
@@ -368,7 +360,7 @@ static string_t *str_replace(string_t *self, VALUE arg)
 	self->capa = self->len = CFStringGetLength((CFStringRef)arg);
 	self->is_utf16 = true;
 	if (self->len != 0) {
-	    self->data.uchars = malloc(self->len * sizeof(UChar));
+	    GC_WB(&self->data.uchars, xmalloc(self->len * sizeof(UChar)));
 	    assert(self->data.uchars != NULL);
 	    CFStringGetCharacters((CFStringRef)arg, CFRangeMake(0, self->len), self->data.uchars);
 	}
@@ -380,12 +372,12 @@ static string_t *str_replace(string_t *self, VALUE arg)
 	self->is_utf16 = str->is_utf16;
 	if (self->len != 0) {
 	    if (str->is_utf16) {
-		self->data.uchars = malloc(self->len * sizeof(UChar));
+		GC_WB(self->data.uchars, xmalloc(self->len * sizeof(UChar)));
 		assert(self->data.uchars != NULL);
 		memcpy(self->data.uchars, str->data.uchars, self->len * sizeof(UChar));
 	    }
 	    else {
-		self->data.bytes = malloc(self->len);
+		GC_WB(self->data.bytes, xmalloc(self->len));
 		assert(self->data.bytes != NULL);
 		memcpy(self->data.bytes, str->data.bytes, self->len);
 	    }
