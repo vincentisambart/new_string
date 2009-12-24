@@ -399,7 +399,32 @@ static long str_length(string_t *self)
 	    return self->len;
 	}
 	else {
-	    abort(); // TODO
+	    char buffer[U_CNV_SAFECLONE_BUFFERSIZE];
+	    UErrorCode err = U_ZERO_ERROR;
+	    int32_t buffer_size = U_CNV_SAFECLONE_BUFFERSIZE;
+	    UConverter *cnv = ucnv_safeClone(
+		    self->enc->converter,
+		    buffer,
+		    &buffer_size,
+		    &err
+		);
+	    ucnv_reset(cnv);
+
+	    const char *pos = self->data.bytes;
+	    const char *end = pos + self->len;
+	    long len = 0;
+	    for (;;) {
+		err = U_ZERO_ERROR;
+		// iterate through the string
+		// one Unicode code point at a time
+		ucnv_getNextUChar(cnv, &pos, end, &err);
+		if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
+		    break;
+		}
+		++len;
+	    }
+	    ucnv_close(cnv);
+	    return len;
 	}
     }
 }
