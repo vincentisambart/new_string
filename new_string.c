@@ -21,6 +21,7 @@
 
 // TODO:
 // - use rb_usascii_str_new_cstr instead of rb_str_new2
+// - free strings memory
 
 VALUE rb_cMREncoding;
 
@@ -56,9 +57,17 @@ enum {
     ENCODINGS_COUNT
 };
 
+#if __LITTLE_ENDIAN__
+#define ENCODING_UTF16_NATIVE ENCODING_UTF16LE
+#define ENCODING_UTF32_NATIVE ENCODING_UTF32LE
+#else
+#define ENCODING_UTF16_NATIVE ENCODING_UTF16BE
+#define ENCODING_UTF32_NATIVE ENCODING_UTF32BE
+#endif
+
 static encoding_t *encodings[ENCODINGS_COUNT];
 
-static VALUE enc_s_list(VALUE klass, SEL sel)
+static VALUE rb_enc_s_list(VALUE klass, SEL sel)
 {
     VALUE ary = rb_ary_new2(ENCODINGS_COUNT);
     for (unsigned int i = 0; i < ENCODINGS_COUNT; ++i) {
@@ -67,7 +76,7 @@ static VALUE enc_s_list(VALUE klass, SEL sel)
     return ary;
 }
 
-static VALUE enc_s_name_list(VALUE klass, SEL sel)
+static VALUE rb_enc_s_name_list(VALUE klass, SEL sel)
 {
     VALUE ary = rb_ary_new();
     for (unsigned int i = 0; i < ENCODINGS_COUNT; ++i) {
@@ -81,7 +90,7 @@ static VALUE enc_s_name_list(VALUE klass, SEL sel)
     return ary;
 }
 
-static VALUE enc_s_aliases(VALUE klass, SEL sel)
+static VALUE rb_enc_s_aliases(VALUE klass, SEL sel)
 {
     VALUE hash = rb_hash_new();
     for (unsigned int i = 0; i < ENCODINGS_COUNT; ++i) {
@@ -95,27 +104,27 @@ static VALUE enc_s_aliases(VALUE klass, SEL sel)
     return hash;
 }
 
-static VALUE enc_s_default_internal(VALUE klass, SEL sel)
+static VALUE rb_enc_s_default_internal(VALUE klass, SEL sel)
 {
     return (VALUE)default_internal;
 }
 
-static VALUE enc_s_default_external(VALUE klass, SEL sel)
+static VALUE rb_enc_s_default_external(VALUE klass, SEL sel)
 {
     return (VALUE)default_external;
 }
 
-static VALUE enc_name(VALUE self, SEL sel)
+static VALUE rb_enc_name(VALUE self, SEL sel)
 {
     return rb_str_new2(ENC(self)->public_name);
 }
 
-static VALUE enc_inspect(VALUE self, SEL sel)
+static VALUE rb_enc_inspect(VALUE self, SEL sel)
 {
     return rb_sprintf("#<%s:%s>", rb_obj_classname(self), ENC(self)->public_name);
 }
 
-static VALUE enc_names(VALUE self, SEL sel)
+static VALUE rb_enc_names(VALUE self, SEL sel)
 {
     encoding_t *encoding = ENC(self);
 
@@ -127,12 +136,12 @@ static VALUE enc_names(VALUE self, SEL sel)
     return ary;
 }
 
-static VALUE enc_ascii_compatible_p(VALUE self, SEL sel)
+static VALUE rb_enc_ascii_compatible_p(VALUE self, SEL sel)
 {
     return ENC(self)->ascii_compatible ? Qtrue : Qfalse;
 }
 
-static VALUE enc_dummy_p(VALUE self, SEL sel)
+static VALUE rb_enc_dummy_p(VALUE self, SEL sel)
 {
     return Qfalse;
 }
@@ -247,24 +256,24 @@ void Init_MREncoding(void)
     rb_cMREncoding = rb_define_class("MREncoding", rb_cObject);
     rb_undef_alloc_func(rb_cMREncoding);
 
-    rb_objc_define_method(rb_cMREncoding, "to_s", enc_name, 0);
-    rb_objc_define_method(rb_cMREncoding, "inspect", enc_inspect, 0);
-    rb_objc_define_method(rb_cMREncoding, "name", enc_name, 0);
-    rb_objc_define_method(rb_cMREncoding, "names", enc_names, 0);
-    rb_objc_define_method(rb_cMREncoding, "dummy?", enc_dummy_p, 0);
-    rb_objc_define_method(rb_cMREncoding, "ascii_compatible?", enc_ascii_compatible_p, 0);
-    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "list", enc_s_list, 0);
-    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "name_list", enc_s_name_list, 0);
-    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "aliases", enc_s_aliases, 0);
+    rb_objc_define_method(rb_cMREncoding, "to_s", rb_enc_name, 0);
+    rb_objc_define_method(rb_cMREncoding, "inspect", rb_enc_inspect, 0);
+    rb_objc_define_method(rb_cMREncoding, "name", rb_enc_name, 0);
+    rb_objc_define_method(rb_cMREncoding, "names", rb_enc_names, 0);
+    rb_objc_define_method(rb_cMREncoding, "dummy?", rb_enc_dummy_p, 0);
+    rb_objc_define_method(rb_cMREncoding, "ascii_compatible?", rb_enc_ascii_compatible_p, 0);
+    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "list", rb_enc_s_list, 0);
+    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "name_list", rb_enc_s_name_list, 0);
+    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "aliases", rb_enc_s_aliases, 0);
     //rb_define_singleton_method(rb_cMREncoding, "find", enc_find, 1);
     //rb_define_singleton_method(rb_cMREncoding, "compatible?", enc_compatible_p, 2);
 
     //rb_define_method(rb_cEncoding, "_dump", enc_dump, -1);
     //rb_define_singleton_method(rb_cEncoding, "_load", enc_load, 1);
 
-    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "default_external", enc_s_default_external, 0);
+    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "default_external", rb_enc_s_default_external, 0);
     //rb_define_singleton_method(rb_cMREncoding, "default_external=", set_default_external, 1);
-    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "default_internal", enc_s_default_internal, 0);
+    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "default_internal", rb_enc_s_default_internal, 0);
     //rb_define_singleton_method(rb_cMREncoding, "default_internal=", set_default_internal, 1);
     //rb_define_singleton_method(rb_cMREncoding, "locale_charmap", rb_locale_charmap, 0);
 
@@ -275,36 +284,138 @@ void Init_MREncoding(void)
 
 VALUE rb_cMRString;
 
+// In binary representation, the length and capacity are in bytes.
+// In UTF-16 representation, the length and capacity are in UChars
+// (so len might be bigger than the length of the string in characters)
 typedef struct {
     struct RBasic basic;
     encoding_t *enc;
+    long capa;
+    long len;
+    union {
+	char *bytes;
+	UChar *uchars;
+    } data;
+    int flags;
 } string_t;
 
 #define STR(x) ((string_t *)(x))
 
-static VALUE str_s_alloc(VALUE klass)
+#define STR_REPR_UTF16_FLAG 0x001
+#define STR_REPR_IS_BINARY(str) (!(STR(str)->flags & STR_REPR_UTF16_FLAG))
+#define STR_REPR_IS_UTF16(str) (STR(str)->flags & STR_REPR_UTF16_FLAG)
+
+static string_t *str_alloc(void)
 {
     NEWOBJ(str, string_t);
     str->basic.flags = 0;
     str->basic.klass = rb_cMRString;
-    str->enc = default_internal;
-    return (VALUE)str;
+    str->enc = encodings[ENCODING_BINARY];
+    str->capa = 0;
+    str->len = 0;
+    str->data.bytes = 0;
+    str->flags = 0;
+    return str;
 }
 
-static VALUE str_encoding(VALUE self, SEL sel)
+static VALUE rb_str_s_alloc(VALUE klass)
+{
+    return (VALUE)str_alloc();
+}
+
+extern VALUE rb_cString;
+extern VALUE rb_cCFString;
+extern VALUE rb_cNSString;
+extern VALUE rb_cNSMutableString;
+extern VALUE rb_cSymbol;
+extern VALUE rb_cByteString;
+
+static string_t *str_replace(string_t *self, VALUE arg)
+{
+    if (self->data.bytes != NULL) {
+	free(self->data.bytes);
+	self->data.bytes = NULL;
+	self->len = 0;
+	self->capa = 0;
+    }
+
+    VALUE klass = OBJC_CLASS(arg);
+    if (klass == rb_cByteString) {
+	self->enc = encodings[ENCODING_BINARY];
+	self->capa = self->len = rb_bytestring_length(arg);
+	if (self->len != 0) {
+	    self->data.bytes = malloc(self->len);
+	    assert(self->data.bytes != NULL);
+	    memcpy(self->data.bytes, rb_bytestring_byte_pointer(arg), self->len);
+	}
+    }
+    else if ((klass == rb_cString)
+		|| (klass == rb_cCFString)
+		|| (klass == rb_cNSString)
+		|| (klass == rb_cNSMutableString)) {
+	self->enc = encodings[ENCODING_UTF16_NATIVE];
+	self->capa = self->len = CFStringGetLength((CFStringRef)arg);
+	self->flags = STR_REPR_UTF16_FLAG;
+	if (self->len != 0) {
+	    self->data.uchars = malloc(self->len * sizeof(UChar));
+	    assert(self->data.uchars != NULL);
+	    CFStringGetCharacters((CFStringRef)arg, CFRangeMake(0, self->len), self->data.uchars);
+	}
+    }
+    else if (klass == rb_cMRString) {
+	string_t *str = STR(arg);
+	self->enc = str->enc;
+	self->capa = self->len = str->len;
+	self->flags = str->flags;
+	if (self->len != 0) {
+	    if (STR_REPR_IS_BINARY(arg)) {
+		self->data.bytes = malloc(self->len);
+		assert(self->data.bytes != NULL);
+		memcpy(self->data.bytes, str->data.bytes, self->len);
+	    }
+	    else {
+		self->data.uchars = malloc(self->len * sizeof(UChar));
+		assert(self->data.uchars != NULL);
+		memcpy(self->data.uchars, str->data.uchars, self->len * sizeof(UChar));
+	    }
+	}
+    }
+    else if (klass == rb_cSymbol) {
+	// TODO
+	abort();
+    }
+    else {
+	// TODO
+	abort();
+    }
+    return self;
+}
+
+static VALUE rb_str_initialize(VALUE self, SEL sel, int argc, VALUE *argv)
+{
+    VALUE arg;
+    if (argc > 0) {
+	rb_scan_args(argc, argv, "01", &arg);
+	str_replace(STR(self), arg);
+    }
+    return self;
+}
+
+static VALUE rb_str_encoding(VALUE self, SEL sel)
 {
     return (VALUE)STR(self)->enc;
 }
 
 void Init_MRString(void)
 {
-    assert(default_external != NULL);
-    assert(default_internal != NULL);
+    // encodings must be loaded before strings
+    assert((default_external != NULL) && (default_internal != NULL));
 
     rb_cMRString = rb_define_class("MRString", rb_cObject);
-    rb_objc_define_method(OBJC_CLASS(rb_cMRString), "alloc", str_s_alloc, 0);
+    rb_objc_define_method(OBJC_CLASS(rb_cMRString), "alloc", rb_str_s_alloc, 0);
 
-    rb_objc_define_method(rb_cMRString, "encoding", str_encoding, 0);
+    rb_objc_define_method(rb_cMRString, "initialize", rb_str_initialize, -1);
+    rb_objc_define_method(rb_cMRString, "encoding", rb_str_encoding, 0);
 }
 
 void Init_new_string(void)
