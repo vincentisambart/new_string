@@ -472,27 +472,30 @@ static long str_bytesize(string_t *self)
 
 static VALUE str_getbyte(string_t *self, long index)
 {
-    if (index < 0) {
-	return Qnil;
-    }
-
     unsigned char c;
     if (self->is_utf16) {
-	if (self->enc == encodings[ENCODING_UTF16_NATIVE]) {
-	    if (index >= self->len * 2) {
+	if ((self->enc == encodings[ENCODING_UTF16_NATIVE])
+		|| (self->enc == encodings[ENCODING_UTF16_NON_NATIVE])) {
+	    long bytesize = self->len * 2;
+	    if (index < 0) {
+		index += bytesize;
+		if (index < 0) {
+		    return Qnil;
+		}
+	    }
+	    if (index >= bytesize) {
 		return Qnil;
 	    }
-	    c = self->data.bytes[index];
-	}
-	else if (self->enc == encodings[ENCODING_UTF16_NON_NATIVE]) {
-	    if (index >= self->len * 2) {
-		return Qnil;
-	    }
-	    if (index % 2 == 0) {
-		c = self->data.bytes[index+1];
+	    if (self->enc == encodings[ENCODING_UTF16_NATIVE]) {
+		c = self->data.bytes[index];
 	    }
 	    else {
-		c = self->data.bytes[index-1];
+		if (index % 2 == 0) {
+		    c = self->data.bytes[index+1];
+		}
+		else {
+		    c = self->data.bytes[index-1];
+		}
 	    }
 	}
 	else {
@@ -500,6 +503,12 @@ static VALUE str_getbyte(string_t *self, long index)
 	}
     }
     else {
+	if (index < 0) {
+	    index += self->len;
+	    if (index < 0) {
+		return Qnil;
+	    }
+	}
 	if (index >= self->len) {
 	    return Qnil;
 	}
