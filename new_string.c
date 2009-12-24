@@ -302,6 +302,20 @@ typedef struct {
 
 #define STR(x) ((string_t *)(x))
 
+// do not forget to close the converter
+// before leaving the function
+#define USE_CONVERTER(cnv, str) \
+    char cnv##_buffer[U_CNV_SAFECLONE_BUFFERSIZE]; \
+    UErrorCode cnv##_err = U_ZERO_ERROR; \
+    int32_t cnv##_buffer_size = U_CNV_SAFECLONE_BUFFERSIZE; \
+    UConverter *cnv = ucnv_safeClone( \
+	    str->enc->converter, \
+	    cnv##_buffer, \
+	    &cnv##_buffer_size, \
+	    &cnv##_err \
+	); \
+    ucnv_reset(cnv);
+
 static string_t *str_alloc(void)
 {
     NEWOBJ(str, string_t);
@@ -399,33 +413,64 @@ static long str_length(string_t *self)
 	    return self->len;
 	}
 	else {
-	    char buffer[U_CNV_SAFECLONE_BUFFERSIZE];
-	    UErrorCode err = U_ZERO_ERROR;
-	    int32_t buffer_size = U_CNV_SAFECLONE_BUFFERSIZE;
-	    UConverter *cnv = ucnv_safeClone(
-		    self->enc->converter,
-		    buffer,
-		    &buffer_size,
-		    &err
-		);
-	    ucnv_reset(cnv);
+	    USE_CONVERTER(cnv, self);
 
 	    const char *pos = self->data.bytes;
 	    const char *end = pos + self->len;
 	    long len = 0;
 	    for (;;) {
-		err = U_ZERO_ERROR;
-		// iterate through the string
-		// one Unicode code point at a time
+		// iterate through the string one Unicode code point at a time
+		// (we dont care what the character is or if it's valid or not)
+		UErrorCode err = U_ZERO_ERROR;
 		ucnv_getNextUChar(cnv, &pos, end, &err);
 		if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
+		    // end of the string
 		    break;
 		}
 		++len;
 	    }
+
 	    ucnv_close(cnv);
 	    return len;
 	}
+    }
+}
+
+#define STACK_BUFFER_SIZE 1024
+static long str_bytesize(string_t *self)
+{
+    if (self->is_utf16) {
+	if ((self->enc == encodings[ENCODING_UTF16BE])
+		|| (self->enc == encodings[ENCODING_UTF16LE])) {
+	    return self->len * sizeof(UChar);
+	}
+	else {
+	    // for strings stored in UTF-16 for which the Ruby encoding is not UTF-16,
+	    // calculate the length this string would have if it was in this encoding
+	    USE_CONVERTER(cnv, self);
+
+	    long len = 0;
+	    char buffer[STACK_BUFFER_SIZE];
+	    const UChar *source_pos = self->data.uchars;
+	    const UChar *source_end = self->data.uchars + self->len;
+	    char *target_end = buffer + STACK_BUFFER_SIZE;
+	    UErrorCode err = U_ZERO_ERROR;
+	    for (;;) {
+		char *target_pos = buffer;
+		ucnv_fromUnicode(cnv, &target_pos, target_end, &source_pos, source_end, NULL, true, &err);
+		len += target_pos - buffer;
+		if (err != U_BUFFER_OVERFLOW_ERROR) {
+		    assert(U_SUCCESS(err));
+		    break;
+		}
+	    }
+
+	    ucnv_close(cnv);
+	    return len;
+	}
+    }
+    else {
+	return self->len;
     }
 }
 
@@ -444,6 +489,11 @@ static VALUE mr_str_length(VALUE self, SEL sel)
     return INT2NUM(str_length(STR(self)));
 }
 
+static VALUE mr_str_bytesize(VALUE self, SEL sel)
+{
+    return INT2NUM(str_bytesize(STR(self)));
+}
+
 static VALUE mr_str_encoding(VALUE self, SEL sel)
 {
     return (VALUE)STR(self)->enc;
@@ -460,6 +510,7 @@ void Init_MRString(void)
     rb_objc_define_method(rb_cMRString, "initialize", mr_str_initialize, -1);
     rb_objc_define_method(rb_cMRString, "encoding", mr_str_encoding, 0);
     rb_objc_define_method(rb_cMRString, "length", mr_str_length, 0);
+    rb_objc_define_method(rb_cMRString, "bytesize", mr_str_bytesize, 0);
 }
 
 void Init_new_string(void)
