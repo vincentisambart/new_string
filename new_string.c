@@ -60,9 +60,13 @@ enum {
 #if __LITTLE_ENDIAN__
 #define ENCODING_UTF16_NATIVE ENCODING_UTF16LE
 #define ENCODING_UTF32_NATIVE ENCODING_UTF32LE
+#define ENCODING_UTF16_NON_NATIVE ENCODING_UTF16BE
+#define ENCODING_UTF32_NON_NATIVE ENCODING_UTF32BE
 #else
 #define ENCODING_UTF16_NATIVE ENCODING_UTF16BE
 #define ENCODING_UTF32_NATIVE ENCODING_UTF32BE
+#define ENCODING_UTF16_NON_NATIVE ENCODING_UTF16LE
+#define ENCODING_UTF32_NON_NATIVE ENCODING_UTF32LE
 #endif
 
 static encoding_t *encodings[ENCODINGS_COUNT];
@@ -466,6 +470,44 @@ static long str_bytesize(string_t *self)
     }
 }
 
+static VALUE str_getbyte(string_t *self, long index)
+{
+    if (index < 0) {
+	return Qnil;
+    }
+
+    unsigned char c;
+    if (self->is_utf16) {
+	if (self->enc == encodings[ENCODING_UTF16_NATIVE]) {
+	    if (index >= self->len * 2) {
+		return Qnil;
+	    }
+	    c = self->data.bytes[index];
+	}
+	else if (self->enc == encodings[ENCODING_UTF16_NON_NATIVE]) {
+	    if (index >= self->len * 2) {
+		return Qnil;
+	    }
+	    if (index % 2 == 0) {
+		c = self->data.bytes[index+1];
+	    }
+	    else {
+		c = self->data.bytes[index-1];
+	    }
+	}
+	else {
+	    abort(); // TODO
+	}
+    }
+    else {
+	if (index >= self->len) {
+	    return Qnil;
+	}
+	c = self->data.bytes[index];
+    }
+    return INT2NUM(c);
+}
+
 static VALUE mr_str_initialize(VALUE self, SEL sel, int argc, VALUE *argv)
 {
     VALUE arg;
@@ -491,6 +533,11 @@ static VALUE mr_str_encoding(VALUE self, SEL sel)
     return (VALUE)STR(self)->enc;
 }
 
+static VALUE mr_str_getbyte(VALUE self, SEL sel, VALUE index)
+{
+    return str_getbyte(STR(self), NUM2LONG(index));
+}
+
 void Init_MRString(void)
 {
     // encodings must be loaded before strings
@@ -503,6 +550,7 @@ void Init_MRString(void)
     rb_objc_define_method(rb_cMRString, "encoding", mr_str_encoding, 0);
     rb_objc_define_method(rb_cMRString, "length", mr_str_length, 0);
     rb_objc_define_method(rb_cMRString, "bytesize", mr_str_bytesize, 0);
+    rb_objc_define_method(rb_cMRString, "getbyte", mr_str_getbyte, 1);
 }
 
 void Init_new_string(void)
