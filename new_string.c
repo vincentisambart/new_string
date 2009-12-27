@@ -288,14 +288,11 @@ void Init_MREncoding(void)
 
 VALUE rb_cMRString;
 
-// In binary representation, the length and capacity are in bytes.
-// In UTF-16 representation, the length and capacity are in UChars
-// (so len might be bigger than the length of the string in Unicode code points)
 typedef struct {
     struct RBasic basic;
     encoding_t *enc;
-    long capa;
-    long len;
+    long capa; // in bytes
+    long len; // in bytes
     union {
 	char *bytes;
 	UChar *uchars;
@@ -304,6 +301,9 @@ typedef struct {
 } string_t;
 
 #define STR(x) ((string_t *)(x))
+#define NATIVE_UTF16(str) ((str)->enc == encodings[ENCODING_UTF16_NATIVE])
+#define LEN_TO_UCHARS(len) ((len) / sizeof(UChar))
+#define UCHARS_TO_LEN(len) ((len) * sizeof(UChar))
 
 // do not forget to close the converter
 // before leaving the function
@@ -328,7 +328,7 @@ static string_t *str_alloc(void)
     str->enc = encodings[ENCODING_BINARY];
     str->capa = 0;
     str->len = 0;
-    str->data.bytes = 0;
+    str->data.bytes = NULL;
     str->is_utf16 = false;
     return str;
 }
@@ -362,11 +362,11 @@ static string_t *str_replace(string_t *self, VALUE arg)
 		|| (klass == rb_cNSString)
 		|| (klass == rb_cNSMutableString)) {
 	self->enc = encodings[ENCODING_UTF16_NATIVE];
-	self->capa = self->len = CFStringGetLength((CFStringRef)arg);
+	self->capa = self->len = UCHARS_TO_LEN(CFStringGetLength((CFStringRef)arg));
 	self->is_utf16 = true;
 	if (self->len != 0) {
-	    GC_WB(&self->data.uchars, xmalloc(self->len * sizeof(UChar)));
-	    CFStringGetCharacters((CFStringRef)arg, CFRangeMake(0, self->len), self->data.uchars);
+	    GC_WB(&self->data.uchars, xmalloc(self->len));
+	    CFStringGetCharacters((CFStringRef)arg, CFRangeMake(0, LEN_TO_UCHARS(self->len)), self->data.uchars);
 	}
     }
     else if (klass == rb_cMRString) {
@@ -375,14 +375,8 @@ static string_t *str_replace(string_t *self, VALUE arg)
 	self->capa = self->len = str->len;
 	self->is_utf16 = str->is_utf16;
 	if (self->len != 0) {
-	    if (str->is_utf16) {
-		GC_WB(self->data.uchars, xmalloc(self->len * sizeof(UChar)));
-		memcpy(self->data.uchars, str->data.uchars, self->len * sizeof(UChar));
-	    }
-	    else {
-		GC_WB(self->data.bytes, xmalloc(self->len));
-		memcpy(self->data.bytes, str->data.bytes, self->len);
-	    }
+	    GC_WB(self->data.bytes, xmalloc(self->len));
+	    memcpy(self->data.bytes, str->data.bytes, self->len);
 	}
     }
     else if (klass == rb_cSymbol) {
@@ -394,13 +388,128 @@ static string_t *str_replace(string_t *self, VALUE arg)
     return self;
 }
 
-static long str_length(string_t *self)
+static void str_make_binary(string_t *self)
+{
+    if (!self->is_utf16) {
+	return;
+    }
+
+    if (NATIVE_UTF16(self)) {
+	self->is_utf16 = false;
+	return;
+    }
+
+    USE_CONVERTER(cnv, self);
+
+    UErrorCode err = U_ZERO_ERROR;
+    long capa = UCNV_GET_MAX_BYTES_FOR_STRING(LEN_TO_UCHARS(self->len), ucnv_getMaxCharSize(cnv));
+    char *buffer = xmalloc(capa);
+    const UChar *source_pos = self->data.uchars;
+    const UChar *source_end = self->data.uchars + LEN_TO_UCHARS(self->len);
+    char *target_pos = buffer;
+    char *target_end = buffer + capa;
+    ucnv_fromUnicode(cnv, &target_pos, target_end, &source_pos, source_end, NULL, true, &err);
+    // there should never be any conversion error here
+    // (if there's one it means some checking has been forgotten before)
+    assert(U_SUCCESS(err));
+
+    ucnv_close(cnv);
+
+    self->is_utf16 = false;
+    self->capa = capa;
+    self->len = target_pos - buffer;
+    GC_WB(&self->data.bytes, buffer);
+}
+
+static long utf16_bytesize_approximation(encoding_t *enc, int bytesize)
+{
+    long approximation;
+    if ((enc == encodings[ENCODING_UTF16BE]) || (enc == encodings[ENCODING_UTF16LE])) {
+	approximation = bytesize; // the bytesize in UTF-16 is the same whatever the endianness
+    }
+    else if ((enc == encodings[ENCODING_UTF32BE]) || (enc == encodings[ENCODING_UTF32LE])) {
+	// the bytesize in UTF-16 is nearly half of the bytesize in UTF-32
+	// (if there characters not in the BMP it's a bit more though)
+	approximation = bytesize / 2;
+    }
+    else {
+	// take a quite large size to not have to reallocate
+	approximation = bytesize * 2;
+    }
+
+    if (approximation & 0x1) {
+	// the size must be an even number
+	++approximation;
+    }
+
+    return approximation;
+}
+
+static bool str_try_making_utf16(string_t *self)
 {
     if (self->is_utf16) {
-	// we must return the length in Unicode code points,
-	// not the number of UChars, even if the probability
-	// we have surrogates is very low
-	return u_countChar32(self->data.uchars, self->len);
+	return true;
+    }
+
+    if (NATIVE_UTF16(self)) {
+	self->is_utf16 = true;
+	return true;
+    }
+
+    if (self->enc == encodings[ENCODING_BINARY]) {
+	// you can't convert binary to anything
+	return false;
+    }
+
+    USE_CONVERTER(cnv, self);
+
+    UErrorCode err = U_ZERO_ERROR;
+    long capa = utf16_bytesize_approximation(self->enc, self->len);
+    const char *source_pos = self->data.bytes;
+    const char *source_end = self->data.bytes + self->len;
+    UChar *buffer = xmalloc(capa);
+    UChar *target_pos = buffer;
+    for (;;) {
+	UChar *target_end = buffer + LEN_TO_UCHARS(capa);
+	ucnv_toUnicode(cnv, &target_pos, target_end, &source_pos, source_end, NULL, true, &err);
+	if (err == U_BUFFER_OVERFLOW_ERROR) {
+fprintf(stderr, "realloc\n");
+	    long index = target_pos - buffer;
+	    capa *= 2;
+	    buffer = xrealloc(buffer, capa);
+	    target_pos = buffer + index;
+	}
+	else if (U_FAILURE(err)) {
+	    ucnv_close(cnv);
+	    return false;
+	}
+	else {
+	    break;
+	}
+    }
+
+    ucnv_close(cnv);
+
+    self->is_utf16 = true;
+    self->capa = capa;
+    self->len = UCHARS_TO_LEN(target_pos - buffer);
+    GC_WB(&self->data.uchars, buffer);
+
+    return true;
+}
+
+static long str_length(string_t *self, bool cocoa_mode)
+{
+    if (self->is_utf16) {
+	if (cocoa_mode) {
+	    return LEN_TO_UCHARS(self->len);
+	}
+	else {
+	    // we must return the length in Unicode code points,
+	    // not the number of UChars, even if the probability
+	    // we have surrogates is very low
+	    return u_countChar32(self->data.uchars, LEN_TO_UCHARS(self->len));
+	}
     }
     else {
 	if (self->enc->fixed_size > 0) {
@@ -416,12 +525,15 @@ static long str_length(string_t *self)
 		// iterate through the string one Unicode code point at a time
 		// (we dont care what the character is or if it's valid or not)
 		UErrorCode err = U_ZERO_ERROR;
-		ucnv_getNextUChar(cnv, &pos, end, &err);
+		UChar32 c = ucnv_getNextUChar(cnv, &pos, end, &err);
 		if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
 		    // end of the string
 		    break;
 		}
 		++len;
+		if (cocoa_mode && U_SUCCESS(err) && !U_IS_BMP(c)) {
+		    ++len;
+		}
 	    }
 
 	    ucnv_close(cnv);
@@ -436,7 +548,7 @@ static long str_bytesize(string_t *self)
     if (self->is_utf16) {
 	if ((self->enc == encodings[ENCODING_UTF16BE])
 		|| (self->enc == encodings[ENCODING_UTF16LE])) {
-	    return self->len * sizeof(UChar);
+	    return self->len;
 	}
 	else {
 	    // for strings stored in UTF-16 for which the Ruby encoding is not UTF-16,
@@ -448,8 +560,8 @@ static long str_bytesize(string_t *self)
 	    const UChar *source_pos = self->data.uchars;
 	    const UChar *source_end = self->data.uchars + self->len;
 	    char *target_end = buffer + STACK_BUFFER_SIZE;
-	    UErrorCode err = U_ZERO_ERROR;
 	    for (;;) {
+		UErrorCode err = U_ZERO_ERROR;
 		char *target_pos = buffer;
 		ucnv_fromUnicode(cnv, &target_pos, target_end, &source_pos, source_end, NULL, true, &err);
 		len += target_pos - buffer;
@@ -515,6 +627,28 @@ static VALUE str_getbyte(string_t *self, long index)
     return INT2NUM(c);
 }
 
+static void str_setbyte(string_t *self, long index, unsigned char value)
+{
+    str_make_binary(self);
+    if ((index < -self->len) || (index >= self->len)) {
+	rb_raise(rb_eIndexError, "index %ld out of string", index);
+    }
+    if (index < 0) {
+	index += self->len;
+    }
+    self->data.bytes[index] = value;
+}
+
+static void str_force_encoding(string_t *self, encoding_t *enc)
+{
+    if (enc == self->enc) {
+	return;
+    }
+    str_make_binary(self);
+    self->enc = enc;
+    str_try_making_utf16(self);
+}
+
 static VALUE mr_str_initialize(VALUE self, SEL sel, int argc, VALUE *argv)
 {
     VALUE arg;
@@ -527,7 +661,7 @@ static VALUE mr_str_initialize(VALUE self, SEL sel, int argc, VALUE *argv)
 
 static VALUE mr_str_length(VALUE self, SEL sel)
 {
-    return INT2NUM(str_length(STR(self)));
+    return INT2NUM(str_length(STR(self), true));
 }
 
 static VALUE mr_str_bytesize(VALUE self, SEL sel)
@@ -545,6 +679,30 @@ static VALUE mr_str_getbyte(VALUE self, SEL sel, VALUE index)
     return str_getbyte(STR(self), NUM2LONG(index));
 }
 
+static VALUE mr_str_setbyte(VALUE self, SEL sel, VALUE index, VALUE value)
+{
+    str_setbyte(STR(self), NUM2LONG(index), 0xFF & (unsigned long)NUM2LONG(value));
+    return value;
+}
+
+static VALUE mr_str_force_encoding(VALUE self, SEL sel, VALUE encoding)
+{
+    encoding_t *enc;
+    if (OBJC_CLASS(encoding) == rb_cMREncoding) {
+	enc = (encoding_t *)encoding;
+    }
+    else {
+	abort(); // TODO
+    }
+    str_force_encoding(STR(self), enc);
+    return self;
+}
+
+static VALUE mr_str_is_utf16(VALUE self, SEL sel)
+{
+    return STR(self)->is_utf16 ? Qtrue : Qfalse;
+}
+
 void Init_MRString(void)
 {
     // encodings must be loaded before strings
@@ -558,6 +716,11 @@ void Init_MRString(void)
     rb_objc_define_method(rb_cMRString, "length", mr_str_length, 0);
     rb_objc_define_method(rb_cMRString, "bytesize", mr_str_bytesize, 0);
     rb_objc_define_method(rb_cMRString, "getbyte", mr_str_getbyte, 1);
+    rb_objc_define_method(rb_cMRString, "setbyte", mr_str_setbyte, 2);
+    rb_objc_define_method(rb_cMRString, "force_encoding", mr_str_force_encoding, 1);
+
+    // this method does not exist in Ruby and is there only for debugging purpose
+    rb_objc_define_method(rb_cMRString, "utf16?", mr_str_is_utf16, 0);
 }
 
 void Init_new_string(void)
