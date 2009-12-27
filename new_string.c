@@ -448,29 +448,38 @@ static long utf16_bytesize_approximation(encoding_t *enc, int bytesize)
 static bool str_is_valid_utf16(string_t *self)
 {
     UChar *uchars = self->data.uchars;
-    long len = LEN_TO_UCHARS(self->len);
+    long uchars_count = LEN_TO_UCHARS(self->len);
     UChar32 lead = 0;
-    for (int i = 0; i < len; ++i) {
+    for (int i = 0; i < uchars_count; ++i) {
 	UChar32 c = uchars[i];
-	if (U16_IS_SINGLE(c)) {
+	if (U16_IS_SURROGATE(c)) { // surrogate
+	    if (U16_IS_SURROGATE_LEAD(c)) { // lead surrogate
+		// a lead surrogate should not be
+		// after an other lead surrogate
+		if (lead != 0) {
+		    return false;
+		}
+		lead = c;
+	    }
+	    else { // trail surrogate
+		// a trail surrogate must follow a lead surrogate
+		if (lead == 0) {
+		    return false;
+		}
+		lead = 0;
+	    }
+	}
+	else { // not a surrogate
+	    // a non-surrogate character should not be after a lead surrogate
+	    // and it should be a valid Unicode character
+	    // Warning: Ruby 1.9 does not do the IS_UNICODE_CHAR check
+	    // (for 1.9, 0xffff is valid though it's not a Unicode character)
 	    if ((lead != 0) || !U_IS_UNICODE_CHAR(c)) {
 		return false;
 	    }
 	}
-	else if (U16_IS_SURROGATE_LEAD(c)) {
-	    lead = c;
-	}
-	else { // SURROGATE_TRAIL
-	    if (!lead) {
-		return 0;
-	    }
-	    UChar32 full_char = U16_GET_SUPPLEMENTARY(lead, c);
-	    if (!U_IS_UNICODE_CHAR(full_char)) {
-		return false;
-	    }
-	    lead = 0;
-	}
     }
+    // the last character should not be a lead surrogate
     return (lead == 0);
 }
 
