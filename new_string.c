@@ -350,7 +350,7 @@ extern VALUE rb_cNSMutableString;
 extern VALUE rb_cSymbol;
 extern VALUE rb_cByteString;
 
-static string_t *str_replace(string_t *self, VALUE arg)
+static void str_replace(string_t *self, VALUE arg)
 {
     VALUE klass = OBJC_CLASS(arg);
     if (klass == rb_cByteString) {
@@ -390,7 +390,11 @@ static string_t *str_replace(string_t *self, VALUE arg)
     else {
 	abort(); // TODO
     }
-    return self;
+}
+
+static void str_clear(string_t *self)
+{
+    self->len = 0;
 }
 
 static void str_make_binary(string_t *self)
@@ -736,6 +740,18 @@ static VALUE mr_str_initialize(VALUE self, SEL sel, int argc, VALUE *argv)
     return self;
 }
 
+static VALUE mr_str_replace(VALUE self, SEL sel, VALUE arg)
+{
+    str_replace(STR(self), arg);
+    return self;
+}
+
+static VALUE mr_str_clear(VALUE self, SEL sel)
+{
+    str_clear(STR(self));
+    return self;
+}
+
 static VALUE mr_str_length(VALUE self, SEL sel)
 {
     return INT2NUM(str_length(STR(self), true));
@@ -805,6 +821,8 @@ void Init_MRString(void)
     rb_objc_define_method(OBJC_CLASS(rb_cMRString), "alloc", mr_str_s_alloc, 0);
 
     rb_objc_define_method(rb_cMRString, "initialize", mr_str_initialize, -1);
+    rb_objc_define_method(rb_cMRString, "replace", mr_str_replace, 1);
+    rb_objc_define_method(rb_cMRString, "clear", mr_str_clear, 0);
     rb_objc_define_method(rb_cMRString, "encoding", mr_str_encoding, 0);
     rb_objc_define_method(rb_cMRString, "length", mr_str_length, 0);
     rb_objc_define_method(rb_cMRString, "size", mr_str_length, 0); // alias
