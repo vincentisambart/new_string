@@ -683,6 +683,16 @@ static void str_force_encoding(string_t *self, encoding_t *enc)
     str_try_making_utf16(self);
 }
 
+static bool str_is_valid_encoding(string_t *self)
+{
+    // binary strings and strings in UTF-16 mode are always valid
+    if (self->is_utf16 || (self->enc == encodings[ENCODING_BINARY])) {
+	return true;
+    }
+    // if we couldn't make the string UTF-16, the encoding is not valid
+    return str_try_making_utf16(self);
+}
+
 static VALUE mr_str_initialize(VALUE self, SEL sel, int argc, VALUE *argv)
 {
     VALUE arg;
@@ -732,6 +742,11 @@ static VALUE mr_str_force_encoding(VALUE self, SEL sel, VALUE encoding)
     return self;
 }
 
+static VALUE mr_str_is_valid_encoding(VALUE self, SEL sel)
+{
+    return str_is_valid_encoding(STR(self)) ? Qtrue : Qfalse;
+}
+
 static VALUE mr_str_is_utf16(VALUE self, SEL sel)
 {
     return STR(self)->is_utf16 ? Qtrue : Qfalse;
@@ -752,6 +767,7 @@ void Init_MRString(void)
     rb_objc_define_method(rb_cMRString, "getbyte", mr_str_getbyte, 1);
     rb_objc_define_method(rb_cMRString, "setbyte", mr_str_setbyte, 2);
     rb_objc_define_method(rb_cMRString, "force_encoding", mr_str_force_encoding, 1);
+    rb_objc_define_method(rb_cMRString, "valid_encoding?", mr_str_is_valid_encoding, 0);
 
     // this method does not exist in Ruby and is there only for debugging purpose
     rb_objc_define_method(rb_cMRString, "utf16?", mr_str_is_utf16, 0);
