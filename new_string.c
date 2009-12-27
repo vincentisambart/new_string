@@ -301,8 +301,12 @@ typedef struct {
 } string_t;
 
 #define STR(x) ((string_t *)(x))
+
 #define NATIVE_UTF16_STR(str) ((str)->enc == encodings[ENCODING_UTF16_NATIVE])
 #define NON_NATIVE_UTF16_STR(str) ((str)->enc == encodings[ENCODING_UTF16_NON_NATIVE])
+#define UTF16_STR(str) (NATIVE_UTF16_STR(str) || NON_NATIVE_UTF16_STR(str))
+#define BINARY_STR(str) ((str)->enc == encodings[ENCODING_BINARY])
+
 #define LEN_TO_UCHARS(len) ((len) / sizeof(UChar))
 #define UCHARS_TO_LEN(len) ((len) * sizeof(UChar))
 
@@ -500,7 +504,7 @@ static bool str_try_making_utf16(string_t *self)
 	}
     }
 
-    if (self->enc == encodings[ENCODING_BINARY]) {
+    if (BINARY_STR(self)) {
 	// you can't convert binary to anything
 	return false;
     }
@@ -626,7 +630,7 @@ static long str_bytesize(string_t *self)
 
 static bool str_getbyte(string_t *self, long index, unsigned char *c)
 {
-    if (self->is_utf16 && (NATIVE_UTF16_STR(self) || NON_NATIVE_UTF16_STR(self))) {
+    if (self->is_utf16 && UTF16_STR(self)) {
 	if (index < 0) {
 	    index += self->len;
 	    if (index < 0) {
@@ -692,11 +696,34 @@ static void str_force_encoding(string_t *self, encoding_t *enc)
 static bool str_is_valid_encoding(string_t *self)
 {
     // binary strings and strings in UTF-16 mode are always valid
-    if (self->is_utf16 || (self->enc == encodings[ENCODING_BINARY])) {
+    if (self->is_utf16 || BINARY_STR(self)) {
 	return true;
     }
     // if we couldn't make the string UTF-16, the encoding is not valid
     return str_try_making_utf16(self);
+}
+
+static bool str_is_ascii_only(string_t *self)
+{
+    if (!self->enc->ascii_compatible) {
+	return false;
+    }
+    if (self->is_utf16) {
+	long uchars_count = LEN_TO_UCHARS(self->len);
+	for (long i = 0; i < uchars_count; ++i) {
+	    if (self->data.uchars[i] >= 128) {
+		return false;
+	    }
+	}
+    }
+    else {
+	for (long i = 0; i < self->len; ++i) {
+	    if ((unsigned char)self->data.bytes[i] >= 128) {
+		return false;
+	    }
+	}
+    }
+    return true;
 }
 
 static VALUE mr_str_initialize(VALUE self, SEL sel, int argc, VALUE *argv)
@@ -759,6 +786,11 @@ static VALUE mr_str_is_valid_encoding(VALUE self, SEL sel)
     return str_is_valid_encoding(STR(self)) ? Qtrue : Qfalse;
 }
 
+static VALUE mr_str_is_ascii_only(VALUE self, SEL sel)
+{
+    return str_is_ascii_only(STR(self)) ? Qtrue : Qfalse;
+}
+
 static VALUE mr_str_is_utf16(VALUE self, SEL sel)
 {
     return STR(self)->is_utf16 ? Qtrue : Qfalse;
@@ -775,11 +807,13 @@ void Init_MRString(void)
     rb_objc_define_method(rb_cMRString, "initialize", mr_str_initialize, -1);
     rb_objc_define_method(rb_cMRString, "encoding", mr_str_encoding, 0);
     rb_objc_define_method(rb_cMRString, "length", mr_str_length, 0);
+    rb_objc_define_method(rb_cMRString, "size", mr_str_length, 0); // alias
     rb_objc_define_method(rb_cMRString, "bytesize", mr_str_bytesize, 0);
     rb_objc_define_method(rb_cMRString, "getbyte", mr_str_getbyte, 1);
     rb_objc_define_method(rb_cMRString, "setbyte", mr_str_setbyte, 2);
     rb_objc_define_method(rb_cMRString, "force_encoding", mr_str_force_encoding, 1);
     rb_objc_define_method(rb_cMRString, "valid_encoding?", mr_str_is_valid_encoding, 0);
+    rb_objc_define_method(rb_cMRString, "ascii_only?", mr_str_is_ascii_only, 0);
 
     // this method does not exist in Ruby and is there only for debugging purpose
     rb_objc_define_method(rb_cMRString, "utf16?", mr_str_is_utf16, 0);
