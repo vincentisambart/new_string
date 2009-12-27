@@ -445,6 +445,35 @@ static long utf16_bytesize_approximation(encoding_t *enc, int bytesize)
     return approximation;
 }
 
+static bool str_is_valid_utf16(string_t *self)
+{
+    UChar *uchars = self->data.uchars;
+    long len = LEN_TO_UCHARS(self->len);
+    UChar32 lead = 0;
+    for (int i = 0; i < len; ++i) {
+	UChar32 c = uchars[i];
+	if (U16_IS_SINGLE(c)) {
+	    if ((lead != 0) || !U_IS_UNICODE_CHAR(c)) {
+		return false;
+	    }
+	}
+	else if (U16_IS_SURROGATE_LEAD(c)) {
+	    lead = c;
+	}
+	else { // SURROGATE_TRAIL
+	    if (!lead) {
+		return 0;
+	    }
+	    UChar32 full_char = U16_GET_SUPPLEMENTARY(lead, c);
+	    if (!U_IS_UNICODE_CHAR(full_char)) {
+		return false;
+	    }
+	    lead = 0;
+	}
+    }
+    return (lead == 0);
+}
+
 static bool str_try_making_utf16(string_t *self)
 {
     if (self->is_utf16) {
@@ -452,8 +481,13 @@ static bool str_try_making_utf16(string_t *self)
     }
 
     if (NATIVE_UTF16(self)) {
-	self->is_utf16 = true;
-	return true;
+	if (str_is_valid_utf16(self)) {
+	    self->is_utf16 = true;
+	    return true;
+	}
+	else {
+	    return false;
+	}
     }
 
     if (self->enc == encodings[ENCODING_BINARY]) {
