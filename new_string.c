@@ -623,31 +623,29 @@ static long str_bytesize(string_t *self)
     }
 }
 
-static VALUE str_getbyte(string_t *self, long index)
+static bool str_getbyte(string_t *self, long index, unsigned char *c)
 {
-    unsigned char c;
     if (self->is_utf16) {
 	if ((self->enc == encodings[ENCODING_UTF16_NATIVE])
 		|| (self->enc == encodings[ENCODING_UTF16_NON_NATIVE])) {
-	    long bytesize = self->len * 2;
 	    if (index < 0) {
-		index += bytesize;
+		index += self->len;
 		if (index < 0) {
-		    return Qnil;
+		    return false;
 		}
 	    }
-	    if (index >= bytesize) {
-		return Qnil;
+	    if (index >= self->len) {
+		return false;
 	    }
 	    if (self->enc == encodings[ENCODING_UTF16_NATIVE]) {
-		c = self->data.bytes[index];
+		*c = self->data.bytes[index];
 	    }
 	    else {
 		if (index % 2 == 0) {
-		    c = self->data.bytes[index+1];
+		    *c = self->data.bytes[index+1];
 		}
 		else {
-		    c = self->data.bytes[index-1];
+		    *c = self->data.bytes[index-1];
 		}
 	    }
 	}
@@ -659,15 +657,15 @@ static VALUE str_getbyte(string_t *self, long index)
 	if (index < 0) {
 	    index += self->len;
 	    if (index < 0) {
-		return Qnil;
+		return false;
 	    }
 	}
 	if (index >= self->len) {
-	    return Qnil;
+	    return false;
 	}
-	c = self->data.bytes[index];
+	*c = self->data.bytes[index];
     }
-    return INT2NUM(c);
+    return true;
 }
 
 static void str_setbyte(string_t *self, long index, unsigned char value)
@@ -729,7 +727,13 @@ static VALUE mr_str_encoding(VALUE self, SEL sel)
 
 static VALUE mr_str_getbyte(VALUE self, SEL sel, VALUE index)
 {
-    return str_getbyte(STR(self), NUM2LONG(index));
+    unsigned char c;
+    if (str_getbyte(STR(self), NUM2LONG(index), &c)) {
+	return INT2NUM(c);
+    }
+    else {
+	return Qnil;
+    }
 }
 
 static VALUE mr_str_setbyte(VALUE self, SEL sel, VALUE index, VALUE value)
