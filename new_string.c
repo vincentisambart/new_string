@@ -301,7 +301,8 @@ typedef struct {
 } string_t;
 
 #define STR(x) ((string_t *)(x))
-#define NATIVE_UTF16(str) ((str)->enc == encodings[ENCODING_UTF16_NATIVE])
+#define NATIVE_UTF16_STR(str) ((str)->enc == encodings[ENCODING_UTF16_NATIVE])
+#define NON_NATIVE_UTF16_STR(str) ((str)->enc == encodings[ENCODING_UTF16_NON_NATIVE])
 #define LEN_TO_UCHARS(len) ((len) / sizeof(UChar))
 #define UCHARS_TO_LEN(len) ((len) * sizeof(UChar))
 
@@ -394,7 +395,7 @@ static void str_make_binary(string_t *self)
 	return;
     }
 
-    if (NATIVE_UTF16(self)) {
+    if (NATIVE_UTF16_STR(self)) {
 	self->is_utf16 = false;
 	return;
     }
@@ -489,7 +490,7 @@ static bool str_try_making_utf16(string_t *self)
 	return true;
     }
 
-    if (NATIVE_UTF16(self)) {
+    if (NATIVE_UTF16_STR(self)) {
 	if (str_is_valid_utf16(self)) {
 	    self->is_utf16 = true;
 	    return true;
@@ -516,9 +517,8 @@ static bool str_try_making_utf16(string_t *self)
 	UChar *target_end = buffer + LEN_TO_UCHARS(capa);
 	ucnv_toUnicode(cnv, &target_pos, target_end, &source_pos, source_end, NULL, true, &err);
 	if (err == U_BUFFER_OVERFLOW_ERROR) {
-fprintf(stderr, "realloc\n");
 	    long index = target_pos - buffer;
-	    capa *= 2;
+	    capa *= 2; // double the buffer's size
 	    buffer = xrealloc(buffer, capa);
 	    target_pos = buffer + index;
 	}
@@ -609,6 +609,7 @@ static long str_bytesize(string_t *self)
 		ucnv_fromUnicode(cnv, &target_pos, target_end, &source_pos, source_end, NULL, true, &err);
 		len += target_pos - buffer;
 		if (err != U_BUFFER_OVERFLOW_ERROR) {
+		    // if the convertion failed, a check was missing somewhere
 		    assert(U_SUCCESS(err));
 		    break;
 		}
@@ -625,35 +626,33 @@ static long str_bytesize(string_t *self)
 
 static bool str_getbyte(string_t *self, long index, unsigned char *c)
 {
-    if (self->is_utf16) {
-	if ((self->enc == encodings[ENCODING_UTF16_NATIVE])
-		|| (self->enc == encodings[ENCODING_UTF16_NON_NATIVE])) {
+    if (self->is_utf16 && (NATIVE_UTF16_STR(self) || NON_NATIVE_UTF16_STR(self))) {
+	if (index < 0) {
+	    index += self->len;
 	    if (index < 0) {
-		index += self->len;
-		if (index < 0) {
-		    return false;
-		}
-	    }
-	    if (index >= self->len) {
 		return false;
 	    }
-	    if (self->enc == encodings[ENCODING_UTF16_NATIVE]) {
-		*c = self->data.bytes[index];
-	    }
-	    else {
-		if (index % 2 == 0) {
-		    *c = self->data.bytes[index+1];
-		}
-		else {
-		    *c = self->data.bytes[index-1];
-		}
-	    }
 	}
-	else {
-	    abort(); // TODO
+	if (index >= self->len) {
+	    return false;
+	}
+	if (NATIVE_UTF16_STR(self)) {
+	    *c = self->data.bytes[index];
+	}
+	else { // non native byte-order UTF-16
+	    if (index & 1 == 0) { // even
+		*c = self->data.bytes[index+1];
+	    }
+	    else { // odd
+		*c = self->data.bytes[index-1];
+	    }
 	}
     }
     else {
+	// work with a binary string
+	// (UTF-16 strings could be converted on the fly but that would just add complexity)
+	str_make_binary(self);
+
 	if (index < 0) {
 	    index += self->len;
 	    if (index < 0) {
