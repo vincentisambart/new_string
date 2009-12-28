@@ -564,7 +564,10 @@ static long str_length(string_t *self, bool cocoa_mode)
     }
     else {
 	if (self->encoding->fixed_size > 0) {
-	    return self->length_in_bytes;
+	    return self->length_in_bytes / self->encoding->fixed_size;
+	}
+	else if (cocoa_mode && UTF16_ENC(self->encoding)) {
+	    return BYTES_TO_UCHARS(self->length_in_bytes);
 	}
 	else {
 	    USE_CONVERTER(cnv, self);
@@ -740,6 +743,12 @@ static string_t *str_copy_part(string_t *self, long offset_in_bytes, long length
     return str;
 }
 
+NORETURN(static void str_cannot_cut_surrogate(void))
+{
+    fprintf(stderr, "You can't cut a surrogate in two in an encoding that is not UTF-16\n");
+    abort(); // TODO: throw exception
+}
+
 static string_t *str_get_character_at(string_t *self, long index, bool cocoa_mode)
 {
     if (self->length_in_bytes == 0) {
@@ -762,7 +771,7 @@ static string_t *str_get_character_at(string_t *self, long index, bool cocoa_mod
 		return NULL;
 	    }
 	}
-	if (index >= len) {
+	else if (index >= len) {
 	    return NULL;
 	}
 
@@ -771,8 +780,9 @@ static string_t *str_get_character_at(string_t *self, long index, bool cocoa_mod
 	if (str->data_in_utf16 && U16_IS_SURROGATE(str->data.uchars[0])) {
 	    if (!UTF16_ENC(str->encoding)) {
 		// you can't cut a surrogate in an encoding that is not UTF-16
-		// (it's possible to store the surrogate in UTF-8 or UTF-32 but that would be incorrect Unicode)
-		abort(); // TODO: throw exception
+		// (it's in theory possible to store the surrogate in
+		//  UTF-8 or UTF-32 but that would be incorrect Unicode)
+		str_cannot_cut_surrogate();
 	    }
 	    // if a surrogate pair was cut in two, the encoding is not valid anymore
 	    // so we make the string binary (data in UTF-16 must be valid)
@@ -793,6 +803,8 @@ static string_t *str_get_character_at(string_t *self, long index, bool cocoa_mod
 	    // count the characters from the end
 	    offset = uchars_count;
 	    while ((offset > 0) && (index < 0)) {
+		// we suppose here that the UTF-16 is well formed,
+		// so a trail surrogate is always after a lead surrogate
 		if (U16_IS_TRAIL(uchars[offset-1])) {
 		    offset -= 2;
 		}
@@ -829,7 +841,50 @@ static string_t *str_get_character_at(string_t *self, long index, bool cocoa_mod
 	return str_copy_part(self, offset_in_bytes, length_in_bytes);
     }
     else { // binary string and encoding is not UTF-16
-	abort(); // TODO
+	if (index < 0) {
+	    // calculating the length is slow but we don't have much choice
+	    index += str_length(self, cocoa_mode);
+	    if (index < 0) {
+		return NULL;
+	    }
+	}
+
+	// the code has many similarities with str_length
+	USE_CONVERTER(cnv, self);
+
+	const char *pos = self->data.bytes;
+	const char *end = pos + self->length_in_bytes;
+	long current_index = 0;
+	for (;;) {
+	    const char *character_start_pos = pos;
+	    // iterate through the string one Unicode code point at a time
+	    // (we dont care what the character is or if it's valid or not)
+	    UErrorCode err = U_ZERO_ERROR;
+	    UChar32 c = ucnv_getNextUChar(cnv, &pos, end, &err);
+	    if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
+		// end of the string
+		ucnv_close(cnv);
+		return NULL;
+	    }
+	    if (cocoa_mode && U_SUCCESS(err) && !U_IS_BMP(c)) {
+		if ((current_index == index) || (current_index+1 == index)) {
+		    // you can't cut a surrogate in an encoding that is not UTF-16
+		    // (it's in theory possible to store the surrogate in
+		    //  UTF-8 or UTF-32 but that would be incorrect Unicode)
+		    str_cannot_cut_surrogate();
+		}
+		++current_index;
+	    }
+
+	    if (current_index == index) {
+		long offset_in_bytes = character_start_pos - self->data.bytes;
+		long character_width = pos - character_start_pos;
+		ucnv_close(cnv);
+		return str_copy_part(self, offset_in_bytes, character_width);
+	    }
+
+	    ++current_index;
+	}
     }
 }
 
