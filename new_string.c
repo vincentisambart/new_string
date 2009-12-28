@@ -729,11 +729,25 @@ static bool str_is_ascii_only(string_t *self)
     return true;
 }
 
+static string_t *str_copy_part(string_t *self, long offset_in_bytes, long length_in_bytes)
+{
+    string_t *str = str_alloc();
+    str->encoding = self->encoding;
+    str->data_in_utf16 = self->data_in_utf16;
+    str->capacity_in_bytes = str->length_in_bytes = length_in_bytes;
+    GC_WB(&str->data.bytes, xmalloc(length_in_bytes));
+    memcpy(str->data.bytes, &self->data.bytes[offset_in_bytes], length_in_bytes);
+    return str;
+}
+
 static string_t *str_get_character_at(string_t *self, long index, bool cocoa_mode)
 {
-    if ((self->data_in_utf16 && cocoa_mode) || self->encoding->fixed_size) {
+    if (self->length_in_bytes == 0) {
+	return NULL;
+    }
+    if ((cocoa_mode && (self->data_in_utf16 || UTF16_ENC(self->encoding))) || self->encoding->fixed_size) {
 	long character_width;
-	if (self->data_in_utf16) {
+	if (self->data_in_utf16 || UTF16_ENC(self->encoding)) {
 	    character_width = sizeof(UChar);
 	}
 	else {
@@ -752,26 +766,69 @@ static string_t *str_get_character_at(string_t *self, long index, bool cocoa_mod
 	    return NULL;
 	}
 
-	string_t *str = str_alloc();
-	str->encoding = self->encoding;
-	str->data_in_utf16 = self->data_in_utf16;
-	str->capacity_in_bytes = str->length_in_bytes = character_width;
-	GC_WB(&str->data.bytes, xmalloc(str->length_in_bytes));
-	long bytes_index = index * character_width;
-	memcpy(str->data.bytes, &self->data.bytes[bytes_index], str->length_in_bytes);
-	if (self->data_in_utf16 && U16_IS_SURROGATE(str->data.uchars[0])) {
-	    if (!UTF16_ENC(self->encoding)) {
+	long offset_in_bytes = index * character_width;
+	string_t *str = str_copy_part(self, offset_in_bytes, character_width);
+	if (str->data_in_utf16 && U16_IS_SURROGATE(str->data.uchars[0])) {
+	    if (!UTF16_ENC(str->encoding)) {
 		// you can't cut a surrogate in an encoding that is not UTF-16
 		// (it's possible to store the surrogate in UTF-8 or UTF-32 but that would be incorrect Unicode)
 		abort(); // TODO: throw exception
 	    }
-	    // if a surrogate pair was cut in two,
-	    // the encoding is not valid anymore
-	    str->data_in_utf16 = false;
+	    // if a surrogate pair was cut in two, the encoding is not valid anymore
+	    // so we make the string binary (data in UTF-16 must be valid)
+	    str_make_data_binary(str);
 	}
 	return str;
     }
-    else {
+    else if (self->data_in_utf16) { // UTF-16 but not Cocoa mode
+	// we don't have the length of the string, just the number of UChars
+	// (uchars_count <= number of characters)
+	long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);
+	if ((index < -uchars_count) || (index >= uchars_count)) {
+	    return NULL;
+	}
+	const UChar *uchars = self->data.uchars;
+	long offset;
+	if (index < 0) {
+	    // count the characters from the end
+	    offset = uchars_count;
+	    while ((offset > 0) && (index < 0)) {
+		if (U16_IS_TRAIL(uchars[offset-1])) {
+		    offset -= 2;
+		}
+		else {
+		    --offset;
+		}
+		++index;
+	    }
+	    if (index != 0) {
+		return NULL;
+	    }
+	}
+	else {
+	    // count the characters from the start
+	    offset = 0;
+	    U16_FWD_N(uchars, offset, uchars_count, index);
+	    if (offset >= uchars_count) {
+		return NULL;
+	    }
+	}
+	// UTF-16 strings are supposed to be always valid
+	// so the assert should never be triggered
+	assert(!U16_IS_TRAIL(uchars[offset]));
+
+	long length_in_bytes;
+	if (U16_IS_LEAD(uchars[offset])) {
+	    // if it's a lead surrogate we must also copy the trail surrogate
+	    length_in_bytes = UCHARS_TO_BYTES(2);
+	}
+	else {
+	    length_in_bytes = UCHARS_TO_BYTES(1);
+	}
+	long offset_in_bytes = UCHARS_TO_BYTES(offset);
+	return str_copy_part(self, offset_in_bytes, length_in_bytes);
+    }
+    else { // binary string and encoding is not UTF-16
 	abort(); // TODO
     }
 }
