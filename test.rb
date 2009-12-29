@@ -26,19 +26,45 @@ def read_data(name, encoding)
   data
 end
 
+def called_line
+  begin
+    raise ''
+  rescue Exception => e
+    bt = e.backtrace
+    md = /:(\d+):/.match(bt[-2])
+    return md ? md[1] : 0
+  end
+end
+
 $tests_done_count = 0
 $tests_failed_count = 0
 def assert_equal(wanted, got)
   $tests_done_count += 1
   if wanted != got
     $tests_failed_count += 1
-    begin
-      raise ''
-    rescue Exception => e
-      bt = e.backtrace
-      md = /:(\d+):/.match(bt[-1])
-      puts "test failed: #{wanted} != #{got} at line #{md[1]}"
-    end
+    puts "test failed: #{wanted} != #{got} at line #{called_line}"
+  end
+end
+
+def assert_no_exception_raised
+  $tests_done_count += 1
+  begin
+    yield
+  rescue Exception
+    $tests_failed_count += 1
+    puts "test failed: exception raised at line #{called_line}"
+  end
+end
+
+def assert_exception_raised(exception)
+  $tests_done_count += 1
+  begin
+    yield
+  rescue exception
+    # we got the exception we wanted
+  else
+    $tests_failed_count += 1
+    puts "test failed: exception #{exception.name} not raised at line #{called_line}"
   end
 end
 
@@ -47,7 +73,9 @@ UNICODE_ENCODINGS.each do |enc|
 
   assert_equal 9, data.length
   data.length.times do |i|
-    assert_equal 1, data[i].length
+    c = data[i]
+    assert_equal data.encoding, c.encoding
+    assert_equal 1, c.length
   end
 
   case enc
@@ -60,17 +88,44 @@ UNICODE_ENCODINGS.each do |enc|
   end
 end
 
+SURROGATE_UTF16_BYTES = [0xD8, 0x40, 0xDC, 0x0B]
 UNICODE_ENCODINGS.each do |enc|
+puts enc.to_s
   data = read_data('surrogate', enc)
+
+  if enc == :UTF_16LE or enc == :UTF_16BE
+    data.bytesize.times do |i|
+      if enc == :UTF_16LE
+        j = i.even? ? i+1 : i-1
+      else
+        j = i
+      end
+      assert_equal SURROGATE_UTF16_BYTES[j], data.getbyte(i)
+    end
+  end
 
   if MACRUBY
     assert_equal 2, data.length
+    data.length.times do |i|
+      if enc == :UTF_16LE or enc == :UTF_16BE
+        assert_no_exception_raised { data[i] }
+        c = data[i]
+        assert_equal c.bytesize, 2
+        if i == 0
+          assert_equal 0xD8, c.getbyte(enc == :UTF_16BE ? 0 : 1)
+          assert_equal 0x40, c.getbyte(enc == :UTF_16BE ? 1 : 0)
+        else
+          assert_equal 0xDC, c.getbyte(enc == :UTF_16BE ? 0 : 1)
+          assert_equal 0x0B, c.getbyte(enc == :UTF_16BE ? 1 : 0)
+        end
+        assert_equal false, data[i].valid_encoding?
+      else
+        assert_exception_raised(IndexError) { data[i] }
+      end
+    end
   else
     assert_equal 1, data.length
   end
-#  data.length.times do |i|
-#    assert_equal 1, data[i].length
-#  end
 
   assert_equal 4, data.bytesize
 end
