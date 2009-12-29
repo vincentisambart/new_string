@@ -1,0 +1,19 @@
+Necessary before merging the code into MacRuby:
+- inherit from NSMutableString and implement necessary methods
+- String#[]
+- String#[]=
+- String#concat
+- String#+
+- String#encode
+- add NSData to the types of parameters that can be given to String#replace
+- use Ruby 1.9's encoding tables for the Japanese encodings (EUC-JP, Shif_JIS, CP932, ISO-2022-JP)
+- String#dup/clone should work
+- you should not be able to call Encoding#dup/clone
+
+Can be done later:
+- check and fix the methods added to NS(Mutable)String
+  + NSMutableString#force_encoding should throw an exception
+  + When these methods return a new string it should be an instance of the new String
+  + NS(Mutable)String#to_s should return an instance of the new String
+- add a method to convert to NSData
+- maybe also add methods to NSData
