@@ -611,7 +611,7 @@ static long str_bytesize(string_t *self)
 	    long len = 0;
 	    char buffer[STACK_BUFFER_SIZE];
 	    const UChar *source_pos = self->data.uchars;
-	    const UChar *source_end = self->data.uchars + self->length_in_bytes;
+	    const UChar *source_end = self->data.uchars + BYTES_TO_UCHARS(self->length_in_bytes);
 	    char *target_end = buffer + STACK_BUFFER_SIZE;
 	    for (;;) {
 		UErrorCode err = U_ZERO_ERROR;
