@@ -74,6 +74,9 @@ static encoding_t *encodings[ENCODINGS_COUNT];
 #define NATIVE_UTF16_ENC(enc) ((enc) == encodings[ENCODING_UTF16_NATIVE])
 #define NON_NATIVE_UTF16_ENC(enc) ((enc) == encodings[ENCODING_UTF16_NON_NATIVE])
 #define UTF16_ENC(enc) (NATIVE_UTF16_ENC(enc) || NON_NATIVE_UTF16_ENC(enc))
+#define NATIVE_UTF32_ENC(enc) ((enc) == encodings[ENCODING_UTF32_NATIVE])
+#define NON_NATIVE_UTF32_ENC(enc) ((enc) == encodings[ENCODING_UTF32_NON_NATIVE])
+#define UTF32_ENC(enc) (NATIVE_UTF32_ENC(enc) || NON_NATIVE_UTF32_ENC(enc))
 #define BINARY_ENC(enc) ((enc) == encodings[ENCODING_BINARY])
 
 static VALUE mr_enc_s_list(VALUE klass, SEL sel)
@@ -602,7 +605,8 @@ static long str_length(string_t *self, bool cocoa_mode)
 	}
     }
     else {
-	if (self->encoding->fixed_size > 0) { // FIXME: does not work for UTF-32!
+	if (self->encoding->fixed_size == 1) {
+	    // it does not work for UTF-32 so we have to do == 1 not > 0
 	    return self->length_in_bytes / self->encoding->fixed_size;
 	}
 	else if (cocoa_mode && UTF16_ENC(self->encoding)) {
@@ -798,7 +802,9 @@ static string_t *str_get_character_at(string_t *self, long index, bool cocoa_mod
     if (self->length_in_bytes == 0) {
 	return NULL;
     }
-    if ((cocoa_mode && (self->data_in_utf16 || UTF16_ENC(self->encoding))) || self->encoding->fixed_size) {
+    if ((cocoa_mode && (self->data_in_utf16 || UTF16_ENC(self->encoding)))
+	    || (self->encoding->fixed_size == 1) // most fixed encodings but not UTF-32
+	    || (!cocoa_mode && UTF32_ENC(self->encoding))) { // UTF-32 only in non Cocoa mode
 	long character_width;
 	if (self->data_in_utf16 || UTF16_ENC(self->encoding)) {
 	    character_width = sizeof(UChar);
@@ -806,7 +812,7 @@ static string_t *str_get_character_at(string_t *self, long index, bool cocoa_mod
 	else {
 	    // we suppose fixed size encodings will not convert
 	    // to surrogate characters in UTF-16 so it's pretty easy
-	    // FIXME: it's not true for UTF-32
+	    // (UTF-32 might generate surrogates so it's handled specially in the if above)
 	    character_width = self->encoding->fixed_size;
 	}
 	long len = self->length_in_bytes / character_width;
