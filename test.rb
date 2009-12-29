@@ -31,7 +31,7 @@ def called_line
     raise ''
   rescue Exception => e
     bt = e.backtrace
-    md = /:(\d+):/.match(bt[-2])
+    md = /:(\d+):/.match(bt[2])
     return md ? md[1] : 0
   end
 end
@@ -122,6 +122,38 @@ UNICODE_ENCODINGS.each do |enc|
   end
 
   assert_equal 4, data.bytesize
+end
+
+SURROGATE_WITH_INVALID_BYTES = [0x00, 0x02, 0x00, 0x0B, 0xFF, 0xFF, 0xFF, 0xFF]
+[:UTF_32LE, :UTF_32BE].each do |enc|
+  data = read_data('surrogate_with_invalid', enc)
+
+  assert_equal 8, data.bytesize
+  data.bytesize.times do |i|
+    if enc == :UTF_32BE
+      j = i
+    else
+      case i%4
+      when 0
+        j = i + 3
+      when 1
+        j = i + 1
+      when 2
+        j = i - 1
+      when 3
+        j = i - 3
+      end
+    end
+    assert_equal SURROGATE_WITH_INVALID_BYTES[j], data.getbyte(i)
+  end
+  if MACRUBY
+    assert_equal 3, data.length
+    assert_exception_raised(IndexError) { data[0] }
+    assert_exception_raised(IndexError) { data[1] }
+    assert_no_exception_raised { data[2] }
+  else
+    assert_equal 2, data.length
+  end
 end
 
 if $tests_failed_count == 0

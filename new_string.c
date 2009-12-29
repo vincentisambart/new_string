@@ -551,6 +551,9 @@ static bool str_try_making_data_utf16(string_t *self)
 
     USE_CONVERTER(cnv, self);
 
+    UErrorCode err = U_ZERO_ERROR;
+    ucnv_setToUCallBack(cnv, UCNV_TO_U_CALLBACK_STOP, NULL, NULL, NULL, &err);
+
     long capa = utf16_bytesize_approximation(self->encoding, self->length_in_bytes);
     const char *source_pos = self->data.bytes;
     const char *source_end = self->data.bytes + self->length_in_bytes;
@@ -558,7 +561,7 @@ static bool str_try_making_data_utf16(string_t *self)
     UChar *target_pos = buffer;
     for (;;) {
 	UChar *target_end = buffer + BYTES_TO_UCHARS(capa);
-	UErrorCode err = U_ZERO_ERROR;
+	err = U_ZERO_ERROR;
 	ucnv_toUnicode(cnv, &target_pos, target_end, &source_pos, source_end, NULL, true, &err);
 	if (err == U_BUFFER_OVERFLOW_ERROR) {
 	    long index = target_pos - buffer;
@@ -644,13 +647,16 @@ static long str_bytesize(string_t *self)
 	    // calculate the length this string would have if it was in this encoding
 	    USE_CONVERTER(cnv, self);
 
+	    UErrorCode err = U_ZERO_ERROR;
+	    ucnv_setFromUCallBack(cnv, UCNV_FROM_U_CALLBACK_STOP, NULL, NULL, NULL, &err);
+
 	    long len = 0;
 	    char buffer[STACK_BUFFER_SIZE];
 	    const UChar *source_pos = self->data.uchars;
 	    const UChar *source_end = self->data.uchars + BYTES_TO_UCHARS(self->length_in_bytes);
 	    char *target_end = buffer + STACK_BUFFER_SIZE;
 	    for (;;) {
-		UErrorCode err = U_ZERO_ERROR;
+		err = U_ZERO_ERROR;
 		char *target_pos = buffer;
 		ucnv_fromUnicode(cnv, &target_pos, target_end, &source_pos, source_end, NULL, true, &err);
 		len += target_pos - buffer;
@@ -800,6 +806,7 @@ static string_t *str_get_character_at(string_t *self, long index, bool cocoa_mod
 	else {
 	    // we suppose fixed size encodings will not convert
 	    // to surrogate characters in UTF-16 so it's pretty easy
+	    // FIXME: it's not true for UTF-32
 	    character_width = self->encoding->fixed_size;
 	}
 	long len = self->length_in_bytes / character_width;
@@ -813,7 +820,6 @@ static string_t *str_get_character_at(string_t *self, long index, bool cocoa_mod
 	    return NULL;
 	}
 
-	// FIXME: does not work for UTF-32
 	long offset_in_bytes = index * character_width;
 	string_t *str = str_copy_part(self, offset_in_bytes, character_width);
 	if (str->data_in_utf16 && U16_IS_SURROGATE(str->data.uchars[0])) {
