@@ -599,7 +599,7 @@ static long str_length(string_t *self, bool cocoa_mode)
 	}
     }
     else {
-	if (self->encoding->fixed_size > 0) {
+	if (self->encoding->fixed_size > 0) { // FIXME: does not work for UTF-32!
 	    return self->length_in_bytes / self->encoding->fixed_size;
 	}
 	else if (cocoa_mode && UTF16_ENC(self->encoding)) {
@@ -813,6 +813,7 @@ static string_t *str_get_character_at(string_t *self, long index, bool cocoa_mod
 	    return NULL;
 	}
 
+	// FIXME: does not work for UTF-32
 	long offset_in_bytes = index * character_width;
 	string_t *str = str_copy_part(self, offset_in_bytes, character_width);
 	if (str->data_in_utf16 && U16_IS_SURROGATE(str->data.uchars[0])) {

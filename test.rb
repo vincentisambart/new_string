@@ -110,13 +110,8 @@ UNICODE_ENCODINGS.each do |enc|
         assert_no_exception_raised { data[i] }
         c = data[i]
         assert_equal c.bytesize, 2
-        if i == 0
-          assert_equal 0xD8, c.getbyte(enc == :UTF_16BE ? 0 : 1)
-          assert_equal 0x40, c.getbyte(enc == :UTF_16BE ? 1 : 0)
-        else
-          assert_equal 0xDC, c.getbyte(enc == :UTF_16BE ? 0 : 1)
-          assert_equal 0x0B, c.getbyte(enc == :UTF_16BE ? 1 : 0)
-        end
+        assert_equal SURROGATE_UTF16_BYTES[i*2], c.getbyte(enc == :UTF_16BE ? 0 : 1)
+        assert_equal SURROGATE_UTF16_BYTES[i*2 + 1], c.getbyte(enc == :UTF_16BE ? 1 : 0)
         assert_equal false, data[i].valid_encoding?
       else
         assert_exception_raised(IndexError) { data[i] }
