@@ -515,7 +515,6 @@ static bool str_try_making_data_utf16(string_t *self)
 
     USE_CONVERTER(cnv, self);
 
-    UErrorCode err = U_ZERO_ERROR;
     long capa = utf16_bytesize_approximation(self->encoding, self->length_in_bytes);
     const char *source_pos = self->data.bytes;
     const char *source_end = self->data.bytes + self->length_in_bytes;
@@ -523,6 +522,7 @@ static bool str_try_making_data_utf16(string_t *self)
     UChar *target_pos = buffer;
     for (;;) {
 	UChar *target_end = buffer + BYTES_TO_UCHARS(capa);
+	UErrorCode err = U_ZERO_ERROR;
 	ucnv_toUnicode(cnv, &target_pos, target_end, &source_pos, source_end, NULL, true, &err);
 	if (err == U_BUFFER_OVERFLOW_ERROR) {
 	    long index = target_pos - buffer;

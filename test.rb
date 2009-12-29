@@ -46,6 +46,10 @@ UNICODE_ENCODINGS.each do |enc|
   data = read_data('ohayougozaimasu', enc)
 
   assert_equal 9, data.length
+  data.length.times do |i|
+    assert_equal 1, data[i].length
+  end
+
   case enc
   when :UTF_8
     assert_equal 27, data.bytesize
@@ -54,6 +58,21 @@ UNICODE_ENCODINGS.each do |enc|
   when :UTF_32LE, :UTF32_BE
     assert_equal 36, data.bytesize
   end
+end
+
+UNICODE_ENCODINGS.each do |enc|
+  data = read_data('surrogate', enc)
+
+  if MACRUBY
+    assert_equal 2, data.length
+  else
+    assert_equal 1, data.length
+  end
+#  data.length.times do |i|
+#    assert_equal 1, data[i].length
+#  end
+
+  assert_equal 4, data.bytesize
 end
 
 if $tests_failed_count == 0
