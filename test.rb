@@ -9,7 +9,7 @@ else
   E = Encoding
 end
 
-UNICODE_ENCODINGS = [:UTF_8, :UTF_16BE, :UTF_16LE, :UTF_32BE, :UTF_32BE]
+UNICODE_ENCODINGS = [:UTF_8, :UTF_16BE, :UTF_16LE, :UTF_32BE, :UTF_32LE]
 
 def read_data(name, encoding)
   enc_for_name = encoding.to_s.gsub(/_/, '').downcase
@@ -90,7 +90,6 @@ end
 
 SURROGATE_UTF16_BYTES = [0xD8, 0x40, 0xDC, 0x0B]
 UNICODE_ENCODINGS.each do |enc|
-puts enc.to_s
   data = read_data('surrogate', enc)
 
   if enc == :UTF_16LE or enc == :UTF_16BE

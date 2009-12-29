@@ -325,6 +325,16 @@ typedef struct {
 	); \
     ucnv_reset(cnv);
 
+static void invert_byte_order(char *bytes, long length_in_bytes)
+{
+    assert((length_in_bytes & 1) == 0);
+    for (long i = 0; i < length_in_bytes; i += 2) {
+	char tmp = bytes[i];
+	bytes[i] = bytes[i+1];
+	bytes[i+1] = tmp;
+    }
+}
+
 static string_t *str_alloc(void)
 {
     NEWOBJ(str, string_t);
@@ -407,6 +417,15 @@ static void str_make_data_binary(string_t *self)
 	self->data_in_utf16 = false;
 	return;
     }
+    else if (NON_NATIVE_UTF16_ENC(self->encoding)) {
+	// Doing it ourself is faster, and anyway ICU's converter
+	// does not like non-paired surrogates.
+	// The only case there can be an unpaired surrogate with data_in_utf16
+	// is when str_make_data_binary is called at the end of the creation of a substring
+	invert_byte_order(self->data.bytes, self->length_in_bytes);
+	self->data_in_utf16 = false;
+	return;
+    }
 
     USE_CONVERTER(cnv, self);
 
@@ -454,13 +473,20 @@ static long utf16_bytesize_approximation(encoding_t *enc, int bytesize)
     return approximation;
 }
 
-static bool str_is_valid_utf16(string_t *self)
+static bool str_is_valid_utf16(string_t *self, bool native_byte_order)
 {
     UChar *uchars = self->data.uchars;
     long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);
     UChar32 lead = 0;
     for (int i = 0; i < uchars_count; ++i) {
-	UChar32 c = uchars[i];
+	UChar32 c;
+	if (native_byte_order) {
+	    c = uchars[i];
+	}
+	else {
+	    uint8_t *bytes = (uint8_t *)&uchars[i];
+	    c = (uint16_t)bytes[0] << 8 | (uint16_t)bytes[1];
+	}
 	if (U16_IS_SURROGATE(c)) { // surrogate
 	    if (U16_IS_SURROGATE_LEAD(c)) { // lead surrogate
 		// a lead surrogate should not be
@@ -499,7 +525,17 @@ static bool str_try_making_data_utf16(string_t *self)
     }
 
     if (NATIVE_UTF16_ENC(self->encoding)) {
-	if (str_is_valid_utf16(self)) {
+	if (str_is_valid_utf16(self, true)) {
+	    self->data_in_utf16 = true;
+	    return true;
+	}
+	else {
+	    return false;
+	}
+    }
+    else if (NON_NATIVE_UTF16_ENC(self->encoding)) {
+	if (str_is_valid_utf16(self, false)) {
+	    invert_byte_order(self->data.bytes, self->length_in_bytes);
 	    self->data_in_utf16 = true;
 	    return true;
 	}
@@ -650,7 +686,7 @@ static bool str_getbyte(string_t *self, long index, unsigned char *c)
 	    *c = self->data.bytes[index];
 	}
 	else { // non native byte-order UTF-16
-	    if (index & 1 == 0) { // even
+	    if ((index & 1) == 0) { // even
 		*c = self->data.bytes[index+1];
 	    }
 	    else { // odd
@@ -705,6 +741,9 @@ static bool str_is_valid_encoding(string_t *self)
     if (self->data_in_utf16 || BINARY_ENC(self->encoding)) {
 	return true;
     }
+    if (UTF16_ENC(self->encoding)) {
+	return str_is_valid_utf16(self, NATIVE_UTF16_ENC(self->encoding));
+    }
     // if we couldn't make the string UTF-16, the encoding is not valid
     return str_try_making_data_utf16(self);
 }
@@ -745,8 +784,7 @@ static string_t *str_copy_part(string_t *self, long offset_in_bytes, long length
 
 NORETURN(static void str_cannot_cut_surrogate(void))
 {
-    fprintf(stderr, "You can't cut a surrogate in two in an encoding that is not UTF-16\n");
-    abort(); // TODO: throw exception
+    rb_raise(rb_eIndexError, "You can't cut a surrogate in two in an encoding that is not UTF-16");
 }
 
 static string_t *str_get_character_at(string_t *self, long index, bool cocoa_mode)
