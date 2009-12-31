@@ -29,10 +29,10 @@ typedef struct {
     struct RBasic basic;
     unsigned int index;
     const char *public_name;
-    unsigned int fixed_size;
-    bool ascii_compatible;
     const char **aliases;
     unsigned int aliases_count;
+    bool single_byte_encoding : 1;
+    bool ascii_compatible : 1;
     UConverter *converter;
 } encoding_t;
 
@@ -185,8 +185,8 @@ static void define_encoding_constant(const char *name, encoding_t *enc)
 static void add_encoding(
 	unsigned int encoding_index, // index of the encoding in the encodings array
 	const char *public_name, // public name for the encoding
-	unsigned int fixed_size, // if 0 the size of a character is not fixed, if 1 or more it's the size of a character (in bytes)
-	const bool ascii_compatible, // is the encoding ASCII compatible or not
+	bool single_byte_encoding, // in the encoding a character takes only one byte
+	bool ascii_compatible, // is the encoding ASCII compatible or not
 	... // aliases for the encoding (should no include the public name) - must end with a NULL
 	)
 {
@@ -231,7 +231,7 @@ static void add_encoding(
     // fill the fields
     enc->index = encoding_index;
     enc->public_name = public_name;
-    enc->fixed_size = fixed_size;
+    enc->single_byte_encoding = single_byte_encoding;
     enc->ascii_compatible = ascii_compatible;
     enc->aliases_count = aliases_count;
     enc->aliases = aliases;
@@ -246,14 +246,14 @@ static void add_encoding(
 
 static void create_encodings(void)
 {
-    add_encoding(ENCODING_BINARY,    "ASCII-8BIT",  1, true,  "BINARY", NULL);
-    add_encoding(ENCODING_ASCII,     "US-ASCII",    1, true,  "ASCII", "ANSI_X3.4-1968", "646", NULL);
-    add_encoding(ENCODING_UTF8,      "UTF-8",       0, true,  "CP65001", NULL);
-    add_encoding(ENCODING_UTF16BE,   "UTF-16BE",    0, false, NULL);
-    add_encoding(ENCODING_UTF16LE,   "UTF-16LE",    0, false, NULL);
-    add_encoding(ENCODING_UTF32BE,   "UTF-32BE",    4, false, "UCS-4BE", NULL);
-    add_encoding(ENCODING_UTF32LE,   "UTF-32LE",    4, false, "UCS-4LE", NULL);
-    add_encoding(ENCODING_ISO8859_1, "ISO-8859-1",  1, true,  "ISO8859-1", NULL);
+    add_encoding(ENCODING_BINARY,    "ASCII-8BIT",  true,  true,  "BINARY", NULL);
+    add_encoding(ENCODING_ASCII,     "US-ASCII",    true,  true,  "ASCII", "ANSI_X3.4-1968", "646", NULL);
+    add_encoding(ENCODING_UTF8,      "UTF-8",       false, true,  "CP65001", NULL);
+    add_encoding(ENCODING_UTF16BE,   "UTF-16BE",    false, false, NULL);
+    add_encoding(ENCODING_UTF16LE,   "UTF-16LE",    false, false, NULL);
+    add_encoding(ENCODING_UTF32BE,   "UTF-32BE",    false, false, "UCS-4BE", NULL);
+    add_encoding(ENCODING_UTF32LE,   "UTF-32LE",    false, false, "UCS-4LE", NULL);
+    add_encoding(ENCODING_ISO8859_1, "ISO-8859-1",  true,  true,  "ISO8859-1", NULL);
     // FIXME: the ICU conversion tables do not seem to match Ruby's Japanese conversion tables
     //add_encoding(ENCODING_EUCJP,     "EUC-JP",      0, true,  "eucJP", NULL);
     //add_encoding(ENCODING_SJIS,      "Shift_JIS",   0, true, "SJIS", NULL);
@@ -363,6 +363,8 @@ extern VALUE rb_cNSMutableString;
 extern VALUE rb_cSymbol;
 extern VALUE rb_cByteString;
 
+static bool str_is_valid_utf16(string_t *self, bool native_byte_order);
+
 static void str_replace(string_t *self, VALUE arg)
 {
     VALUE klass = OBJC_CLASS(arg);
@@ -381,10 +383,10 @@ static void str_replace(string_t *self, VALUE arg)
 		|| (klass == rb_cNSMutableString)) {
 	self->encoding = encodings[ENCODING_UTF16_NATIVE];
 	self->capacity_in_bytes = self->length_in_bytes = UCHARS_TO_BYTES(CFStringGetLength((CFStringRef)arg));
-	self->data_in_utf16 = true;
 	if (self->length_in_bytes != 0) {
 	    GC_WB(&self->data.uchars, xmalloc(self->length_in_bytes));
 	    CFStringGetCharacters((CFStringRef)arg, CFRangeMake(0, BYTES_TO_UCHARS(self->length_in_bytes)), self->data.uchars);
+	    self->data_in_utf16 = str_is_valid_utf16(self, true);
 	}
     }
     else if (klass == rb_cMRString) {
@@ -591,10 +593,10 @@ static bool str_try_making_data_utf16(string_t *self)
     return true;
 }
 
-static long str_length(string_t *self, bool cocoa_mode)
+static long str_length(string_t *self, bool ucs2_mode)
 {
     if (self->data_in_utf16) {
-	if (cocoa_mode) {
+	if (ucs2_mode) {
 	    return BYTES_TO_UCHARS(self->length_in_bytes);
 	}
 	else {
@@ -605,11 +607,10 @@ static long str_length(string_t *self, bool cocoa_mode)
 	}
     }
     else {
-	if (self->encoding->fixed_size == 1) {
-	    // it does not work for UTF-32 so we have to do == 1 not > 0
-	    return self->length_in_bytes / self->encoding->fixed_size;
+	if (self->encoding->single_byte_encoding) {
+	    return self->length_in_bytes;
 	}
-	else if (cocoa_mode && UTF16_ENC(self->encoding)) {
+	else if (ucs2_mode && UTF16_ENC(self->encoding)) {
 	    return BYTES_TO_UCHARS(self->length_in_bytes);
 	}
 	else {
@@ -628,7 +629,7 @@ static long str_length(string_t *self, bool cocoa_mode)
 		    break;
 		}
 		++len;
-		if (cocoa_mode && U_SUCCESS(err) && !U_IS_BMP(c)) {
+		if (ucs2_mode && U_SUCCESS(err) && !U_IS_BMP(c)) {
 		    ++len;
 		}
 	    }
@@ -797,144 +798,147 @@ NORETURN(static void str_cannot_cut_surrogate(void))
     rb_raise(rb_eIndexError, "You can't cut a surrogate in two in an encoding that is not UTF-16");
 }
 
-static string_t *str_get_character_at(string_t *self, long index, bool cocoa_mode)
+static string_t *str_get_character_fixed_width(string_t *self, long index, long character_width)
+{
+    long len = self->length_in_bytes / character_width;
+    if (index < 0) {
+	index += len;
+	if (index < 0) {
+	    return NULL;
+	}
+    }
+    else if (index >= len) {
+	return NULL;
+    }
+
+    long offset_in_bytes = index * character_width;
+    return str_copy_part(self, offset_in_bytes, character_width);
+}
+
+static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode)
 {
     if (self->length_in_bytes == 0) {
 	return NULL;
     }
-    if ((cocoa_mode && (self->data_in_utf16 || UTF16_ENC(self->encoding)))
-	    || (self->encoding->fixed_size == 1) // most fixed encodings but not UTF-32
-	    || (!cocoa_mode && UTF32_ENC(self->encoding))) { // UTF-32 only in non Cocoa mode
-	long character_width;
-	if (self->data_in_utf16 || UTF16_ENC(self->encoding)) {
-	    character_width = sizeof(UChar);
-	}
-	else {
-	    // we suppose fixed size encodings will not convert
-	    // to surrogate characters in UTF-16 so it's pretty easy
-	    // (UTF-32 might generate surrogates so it's handled specially in the if above)
-	    character_width = self->encoding->fixed_size;
-	}
-	long len = self->length_in_bytes / character_width;
-	if (index < 0) {
-	    index += len;
-	    if (index < 0) {
-		return NULL;
-	    }
-	}
-	else if (index >= len) {
-	    return NULL;
-	}
-
-	long offset_in_bytes = index * character_width;
-	string_t *str = str_copy_part(self, offset_in_bytes, character_width);
-	if (str->data_in_utf16 && U16_IS_SURROGATE(str->data.uchars[0])) {
-	    if (!UTF16_ENC(str->encoding)) {
-		// you can't cut a surrogate in an encoding that is not UTF-16
-		// (it's in theory possible to store the surrogate in
-		//  UTF-8 or UTF-32 but that would be incorrect Unicode)
-		str_cannot_cut_surrogate();
-	    }
-	    // if a surrogate pair was cut in two, the encoding is not valid anymore
-	    // so we make the string binary (data in UTF-16 must be valid)
-	    str_make_data_binary(str);
-	}
-	return str;
-    }
-    else if (self->data_in_utf16) { // UTF-16 but not Cocoa mode
-	// we don't have the length of the string, just the number of UChars
-	// (uchars_count <= number of characters)
-	long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);
-	if ((index < -uchars_count) || (index >= uchars_count)) {
-	    return NULL;
-	}
-	const UChar *uchars = self->data.uchars;
-	long offset;
-	if (index < 0) {
-	    // count the characters from the end
-	    offset = uchars_count;
-	    while ((offset > 0) && (index < 0)) {
-		// we suppose here that the UTF-16 is well formed,
-		// so a trail surrogate is always after a lead surrogate
-		if (U16_IS_TRAIL(uchars[offset-1])) {
-		    offset -= 2;
-		}
-		else {
-		    --offset;
-		}
-		++index;
-	    }
-	    if (index != 0) {
-		return NULL;
-	    }
-	}
-	else {
-	    // count the characters from the start
-	    offset = 0;
-	    U16_FWD_N(uchars, offset, uchars_count, index);
-	    if (offset >= uchars_count) {
-		return NULL;
-	    }
-	}
-	// UTF-16 strings are supposed to be always valid
-	// so the assert should never be triggered
-	assert(!U16_IS_TRAIL(uchars[offset]));
-
-	long length_in_bytes;
-	if (U16_IS_LEAD(uchars[offset])) {
-	    // if it's a lead surrogate we must also copy the trail surrogate
-	    length_in_bytes = UCHARS_TO_BYTES(2);
-	}
-	else {
-	    length_in_bytes = UCHARS_TO_BYTES(1);
-	}
-	long offset_in_bytes = UCHARS_TO_BYTES(offset);
-	return str_copy_part(self, offset_in_bytes, length_in_bytes);
-    }
-    else { // binary string and encoding is not UTF-16
-	if (index < 0) {
-	    // calculating the length is slow but we don't have much choice
-	    index += str_length(self, cocoa_mode);
-	    if (index < 0) {
-		return NULL;
-	    }
-	}
-
-	// the code has many similarities with str_length
-	USE_CONVERTER(cnv, self);
-
-	const char *pos = self->data.bytes;
-	const char *end = pos + self->length_in_bytes;
-	long current_index = 0;
-	for (;;) {
-	    const char *character_start_pos = pos;
-	    // iterate through the string one Unicode code point at a time
-	    // (we dont care what the character is or if it's valid or not)
-	    UErrorCode err = U_ZERO_ERROR;
-	    UChar32 c = ucnv_getNextUChar(cnv, &pos, end, &err);
-	    if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
-		// end of the string
-		ucnv_close(cnv);
-		return NULL;
-	    }
-	    if (cocoa_mode && U_SUCCESS(err) && !U_IS_BMP(c)) {
-		if ((current_index == index) || (current_index+1 == index)) {
+    if (self->data_in_utf16) {
+	if (ucs2_mode) {
+	    string_t *str = str_get_character_fixed_width(self, index, 2);
+	    if ((str != NULL) && U16_IS_SURROGATE(str->data.uchars[0])) {
+		if (!UTF16_ENC(str->encoding)) {
 		    // you can't cut a surrogate in an encoding that is not UTF-16
 		    // (it's in theory possible to store the surrogate in
 		    //  UTF-8 or UTF-32 but that would be incorrect Unicode)
 		    str_cannot_cut_surrogate();
 		}
+		// if a surrogate pair was cut in two, the encoding is not valid anymore
+		// so we make the string binary (data in UTF-16 must be valid)
+		str_make_data_binary(str);
+	    }
+	    return str;
+	}
+	else {
+	    // we don't have the length of the string, just the number of UChars
+	    // (uchars_count <= number of characters)
+	    long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);
+	    if ((index < -uchars_count) || (index >= uchars_count)) {
+		return NULL;
+	    }
+	    const UChar *uchars = self->data.uchars;
+	    long offset;
+	    if (index < 0) {
+		// count the characters from the end
+		offset = uchars_count;
+		while ((offset > 0) && (index < 0)) {
+		    // we suppose here that the UTF-16 is well formed,
+		    // so a trail surrogate is always after a lead surrogate
+		    if (U16_IS_TRAIL(uchars[offset-1])) {
+			offset -= 2;
+		    }
+		    else {
+			--offset;
+		    }
+		    ++index;
+		}
+		if (index != 0) {
+		    return NULL;
+		}
+	    }
+	    else {
+		// count the characters from the start
+		offset = 0;
+		U16_FWD_N(uchars, offset, uchars_count, index);
+		if (offset >= uchars_count) {
+		    return NULL;
+		}
+	    }
+	    // UTF-16 strings are supposed to be always valid
+	    // so the assert should never be triggered
+	    assert(!U16_IS_TRAIL(uchars[offset]));
+
+	    long length_in_bytes;
+	    if (U16_IS_LEAD(uchars[offset])) {
+		// if it's a lead surrogate we must also copy the trail surrogate
+		length_in_bytes = UCHARS_TO_BYTES(2);
+	    }
+	    else {
+		length_in_bytes = UCHARS_TO_BYTES(1);
+	    }
+	    long offset_in_bytes = UCHARS_TO_BYTES(offset);
+	    return str_copy_part(self, offset_in_bytes, length_in_bytes);
+	}
+    }
+    else { // data in binary
+	if (self->encoding->single_byte_encoding) {
+	    return str_get_character_fixed_width(self, index, 1);
+	}
+	else if (!ucs2_mode && UTF32_ENC(self->encoding)) { // UTF-32 only in non UCS-2 mode
+	    return str_get_character_fixed_width(self, index, 4);
+	}
+	else {
+	    if (index < 0) {
+		// calculating the length is slow but we don't have much choice
+		index += str_length(self, ucs2_mode);
+		if (index < 0) {
+		    return NULL;
+		}
+	    }
+
+	    // the code has many similarities with str_length
+	    USE_CONVERTER(cnv, self);
+
+	    const char *pos = self->data.bytes;
+	    const char *end = pos + self->length_in_bytes;
+	    long current_index = 0;
+	    for (;;) {
+		const char *character_start_pos = pos;
+		// iterate through the string one Unicode code point at a time
+		// (we dont care what the character is or if it's valid or not)
+		UErrorCode err = U_ZERO_ERROR;
+		UChar32 c = ucnv_getNextUChar(cnv, &pos, end, &err);
+		if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
+		    // end of the string
+		    ucnv_close(cnv);
+		    return NULL;
+		}
+		if (ucs2_mode && U_SUCCESS(err) && !U_IS_BMP(c)) {
+		    if ((current_index == index) || (current_index+1 == index)) {
+			// you can't cut a surrogate in an encoding that is not UTF-16
+			// (it's in theory possible to store the surrogate in
+			//  UTF-8 or UTF-32 but that would be incorrect Unicode)
+			str_cannot_cut_surrogate();
+		    }
+		    ++current_index;
+		}
+
+		if (current_index == index) {
+		    long offset_in_bytes = character_start_pos - self->data.bytes;
+		    long character_width = pos - character_start_pos;
+		    ucnv_close(cnv);
+		    return str_copy_part(self, offset_in_bytes, character_width);
+		}
+
 		++current_index;
 	    }
-
-	    if (current_index == index) {
-		long offset_in_bytes = character_start_pos - self->data.bytes;
-		long character_width = pos - character_start_pos;
-		ucnv_close(cnv);
-		return str_copy_part(self, offset_in_bytes, character_width);
-	    }
-
-	    ++current_index;
 	}
     }
 }
