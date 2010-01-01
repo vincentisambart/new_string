@@ -50,9 +50,9 @@ enum {
     ENCODING_UTF32BE,
     ENCODING_UTF32LE,
     ENCODING_ISO8859_1,
-    ENCODING_EUCJP,
-    ENCODING_SJIS,
-    ENCODING_CP932,
+    //ENCODING_EUCJP,
+    //ENCODING_SJIS,
+    //ENCODING_CP932,
 
     ENCODINGS_COUNT
 };
@@ -595,6 +595,9 @@ static bool str_try_making_data_utf16(string_t *self)
 
 static long str_length(string_t *self, bool ucs2_mode)
 {
+    if (self->length_in_bytes == 0) {
+	return 0;
+    }
     if (self->data_in_utf16) {
 	if (ucs2_mode) {
 	    return BYTES_TO_UCHARS(self->length_in_bytes);
@@ -707,7 +710,8 @@ static bool str_getbyte(string_t *self, long index, unsigned char *c)
     }
     else {
 	// work with a binary string
-	// (UTF-16 strings could be converted on the fly but that would just add complexity)
+	// (UTF-16 strings could be converted to their binary form
+	//  on the fly but that would just add complexity)
 	str_make_data_binary(self);
 
 	if (index < 0) {
