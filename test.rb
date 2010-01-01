@@ -77,6 +77,7 @@ UNICODE_ENCODINGS.each do |enc|
     assert_equal data.encoding, c.encoding
     assert_equal 1, c.length
   end
+  assert_equal true, data.valid_encoding?
 
   case enc
   when :UTF_8

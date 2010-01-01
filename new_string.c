@@ -842,7 +842,7 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
 	}
 	else {
 	    // we don't have the length of the string, just the number of UChars
-	    // (uchars_count <= number of characters)
+	    // (uchars_count >= number of characters)
 	    long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);
 	    if ((index < -uchars_count) || (index >= uchars_count)) {
 		return NULL;
