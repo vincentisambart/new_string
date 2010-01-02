@@ -363,7 +363,7 @@ extern VALUE rb_cNSMutableString;
 extern VALUE rb_cSymbol;
 extern VALUE rb_cByteString;
 
-static bool str_is_valid_utf16(string_t *self, bool native_byte_order);
+static bool str_is_valid_utf16(string_t *self);
 
 static void str_replace(string_t *self, VALUE arg)
 {
@@ -386,7 +386,7 @@ static void str_replace(string_t *self, VALUE arg)
 	if (self->length_in_bytes != 0) {
 	    GC_WB(&self->data.uchars, xmalloc(self->length_in_bytes));
 	    CFStringGetCharacters((CFStringRef)arg, CFRangeMake(0, BYTES_TO_UCHARS(self->length_in_bytes)), self->data.uchars);
-	    self->data_in_utf16 = str_is_valid_utf16(self, true);
+	    self->data_in_utf16 = str_is_valid_utf16(self);
 	}
     }
     else if (klass == rb_cMRString) {
@@ -478,10 +478,11 @@ static long utf16_bytesize_approximation(encoding_t *enc, int bytesize)
     return approximation;
 }
 
-static bool str_is_valid_utf16(string_t *self, bool native_byte_order)
+static bool str_is_valid_utf16(string_t *self)
 {
     UChar *uchars = self->data.uchars;
     long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);
+    bool native_byte_order = NATIVE_UTF16_ENC(self->encoding);
     UChar32 lead = 0;
     for (int i = 0; i < uchars_count; ++i) {
 	UChar32 c;
@@ -530,7 +531,7 @@ static bool str_try_making_data_utf16(string_t *self)
     }
 
     if (NATIVE_UTF16_ENC(self->encoding)) {
-	if (str_is_valid_utf16(self, true)) {
+	if (str_is_valid_utf16(self)) {
 	    self->data_in_utf16 = true;
 	    return true;
 	}
@@ -539,7 +540,7 @@ static bool str_try_making_data_utf16(string_t *self)
 	}
     }
     else if (NON_NATIVE_UTF16_ENC(self->encoding)) {
-	if (str_is_valid_utf16(self, false)) {
+	if (str_is_valid_utf16(self)) {
 	    invert_byte_order(self->data.bytes, self->length_in_bytes);
 	    self->data_in_utf16 = true;
 	    return true;
@@ -757,7 +758,7 @@ static bool str_is_valid_encoding(string_t *self)
 	return true;
     }
     if (UTF16_ENC(self->encoding)) {
-	return str_is_valid_utf16(self, NATIVE_UTF16_ENC(self->encoding));
+	return str_is_valid_utf16(self);
     }
     // if we couldn't make the string UTF-16, the encoding is not valid
     return str_try_making_data_utf16(self);
