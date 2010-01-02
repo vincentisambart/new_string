@@ -19,3 +19,4 @@ Can be done later:
 - add a method to convert to NSData
 - maybe also add methods to NSData
 - add a UTF-8<->UTF-16 converter and UTF-8 string length counter (to be faster than using the ICU converter)
+- add also optimisations for US-ASCII

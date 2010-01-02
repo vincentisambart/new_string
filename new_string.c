@@ -219,6 +219,11 @@ static void add_encoding(
 	    fprintf(stderr, "Couldn't create the encoder for %s\n", public_name);
 	    abort();
 	}
+	// stop the conversion when the conversion failed
+	err = U_ZERO_ERROR;
+	ucnv_setToUCallBack(converter, UCNV_TO_U_CALLBACK_STOP, NULL, NULL, NULL, &err);
+	err = U_ZERO_ERROR;
+	ucnv_setFromUCallBack(converter, UCNV_FROM_U_CALLBACK_STOP, NULL, NULL, NULL, &err);
     }
 
     // create the MacRuby object
@@ -305,7 +310,8 @@ typedef struct {
 	char *bytes;
 	UChar *uchars;
     } data;
-    bool data_in_utf16 : 1;
+    bool stored_in_uchars : 1;
+    bool valid_encoding : 1;
 } string_t;
 
 #define STR(x) ((string_t *)(x))
@@ -328,8 +334,11 @@ typedef struct {
 	); \
     ucnv_reset(cnv);
 
-static void invert_byte_order(char *bytes, long length_in_bytes)
+static void invert_byte_order(string_t *self)
 {
+    long length_in_bytes = self->length_in_bytes;
+    char *bytes = self->data.bytes;
+
     assert((length_in_bytes & 1) == 0);
     for (long i = 0; i < length_in_bytes; i += 2) {
 	char tmp = bytes[i];
@@ -347,7 +356,8 @@ static string_t *str_alloc(void)
     str->capacity_in_bytes = 0;
     str->length_in_bytes = 0;
     str->data.bytes = NULL;
-    str->data_in_utf16 = false;
+    str->valid_encoding = true;
+    str->stored_in_uchars = false;
     return str;
 }
 
@@ -356,14 +366,55 @@ static VALUE mr_str_s_alloc(VALUE klass)
     return (VALUE)str_alloc();
 }
 
+static bool str_is_valid_utf16(string_t *self);
+
+static void str_update_validity(string_t *self)
+{
+    if (self->length_in_bytes == 0) {
+	self->valid_encoding = true;
+    }
+    else if (BINARY_ENC(self->encoding)) {
+	self->valid_encoding = true;
+    }
+    else if (UTF16_ENC(self->encoding)) {
+	self->valid_encoding = str_is_valid_utf16(self);
+    }
+    else if (self->stored_in_uchars) {
+	self->valid_encoding = true;
+    }
+    else {
+	USE_CONVERTER(cnv, self);
+
+	const char *pos = self->data.bytes;
+	const char *end = pos + self->length_in_bytes;
+	for (;;) {
+	    // iterate through the string one Unicode code point at a time
+	    UErrorCode err = U_ZERO_ERROR;
+	    ucnv_getNextUChar(cnv, &pos, end, &err);
+	    if (U_FAILURE(err)) {
+		if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
+		    // end of the string
+		    self->valid_encoding = true;
+		}
+		else {
+		    // conversion error
+		    self->valid_encoding = false;
+		}
+		break;
+	    }
+	}
+
+	ucnv_close(cnv);
+    }
+}
+
+
 extern VALUE rb_cString;
 extern VALUE rb_cCFString;
 extern VALUE rb_cNSString;
 extern VALUE rb_cNSMutableString;
 extern VALUE rb_cSymbol;
 extern VALUE rb_cByteString;
-
-static bool str_is_valid_utf16(string_t *self);
 
 static void str_replace(string_t *self, VALUE arg)
 {
@@ -375,6 +426,7 @@ static void str_replace(string_t *self, VALUE arg)
 	    GC_WB(&self->data.bytes, xmalloc(self->length_in_bytes));
 	    assert(self->data.bytes != NULL);
 	    memcpy(self->data.bytes, rb_bytestring_byte_pointer(arg), self->length_in_bytes);
+	    str_update_validity(self);
 	}
     }
     else if ((klass == rb_cString)
@@ -386,14 +438,16 @@ static void str_replace(string_t *self, VALUE arg)
 	if (self->length_in_bytes != 0) {
 	    GC_WB(&self->data.uchars, xmalloc(self->length_in_bytes));
 	    CFStringGetCharacters((CFStringRef)arg, CFRangeMake(0, BYTES_TO_UCHARS(self->length_in_bytes)), self->data.uchars);
-	    self->data_in_utf16 = str_is_valid_utf16(self);
+	    self->stored_in_uchars = true;
+	    str_update_validity(self);
 	}
     }
     else if (klass == rb_cMRString) {
 	string_t *str = STR(arg);
 	self->encoding = str->encoding;
 	self->capacity_in_bytes = self->length_in_bytes = str->length_in_bytes;
-	self->data_in_utf16 = str->data_in_utf16;
+	self->stored_in_uchars = str->stored_in_uchars;
+	self->valid_encoding = str->valid_encoding;
 	if (self->length_in_bytes != 0) {
 	    GC_WB(self->data.bytes, xmalloc(self->length_in_bytes));
 	    memcpy(self->data.bytes, str->data.bytes, self->length_in_bytes);
@@ -414,21 +468,16 @@ static void str_clear(string_t *self)
 
 static void str_make_data_binary(string_t *self)
 {
-    if (!self->data_in_utf16) {
+    if (!self->stored_in_uchars || NATIVE_UTF16_ENC(self->encoding)) {
+	// nothing to do
 	return;
     }
 
-    if (NATIVE_UTF16_ENC(self->encoding)) {
-	self->data_in_utf16 = false;
-	return;
-    }
-    else if (NON_NATIVE_UTF16_ENC(self->encoding)) {
-	// Doing it ourself is faster, and anyway ICU's converter
+    if (NON_NATIVE_UTF16_ENC(self->encoding)) {
+	// Doing the conversion ourself is faster, and anyway ICU's converter
 	// does not like non-paired surrogates.
-	// The only case there can be an unpaired surrogate with data_in_utf16
-	// is when str_make_data_binary is called at the end of the creation of a substring
-	invert_byte_order(self->data.bytes, self->length_in_bytes);
-	self->data_in_utf16 = false;
+	invert_byte_order(self);
+	self->stored_in_uchars = false;
 	return;
     }
 
@@ -448,7 +497,7 @@ static void str_make_data_binary(string_t *self)
 
     ucnv_close(cnv);
 
-    self->data_in_utf16 = false;
+    self->stored_in_uchars = false;
     self->capacity_in_bytes = capa;
     self->length_in_bytes = target_pos - buffer;
     GC_WB(&self->data.bytes, buffer);
@@ -480,9 +529,11 @@ static long utf16_bytesize_approximation(encoding_t *enc, int bytesize)
 
 static bool str_is_valid_utf16(string_t *self)
 {
+    assert(UTF16_ENC(self->encoding));
+
     UChar *uchars = self->data.uchars;
     long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);
-    bool native_byte_order = NATIVE_UTF16_ENC(self->encoding);
+    bool native_byte_order = self->stored_in_uchars;
     UChar32 lead = 0;
     for (int i = 0; i < uchars_count; ++i) {
 	UChar32 c;
@@ -526,39 +577,25 @@ static bool str_is_valid_utf16(string_t *self)
 
 static bool str_try_making_data_utf16(string_t *self)
 {
-    if (self->data_in_utf16) {
+    if (self->stored_in_uchars) {
 	return true;
     }
-
-    if (NATIVE_UTF16_ENC(self->encoding)) {
-	if (str_is_valid_utf16(self)) {
-	    self->data_in_utf16 = true;
-	    return true;
-	}
-	else {
-	    return false;
-	}
-    }
     else if (NON_NATIVE_UTF16_ENC(self->encoding)) {
-	if (str_is_valid_utf16(self)) {
-	    invert_byte_order(self->data.bytes, self->length_in_bytes);
-	    self->data_in_utf16 = true;
-	    return true;
-	}
-	else {
-	    return false;
-	}
+	invert_byte_order(self);
+	self->stored_in_uchars = true;
+	return true;
     }
-
-    if (BINARY_ENC(self->encoding)) {
+    else if (BINARY_ENC(self->encoding)) {
 	// you can't convert binary to anything
+	return false;
+    }
+    else if (!self->valid_encoding) {
 	return false;
     }
 
     USE_CONVERTER(cnv, self);
 
     UErrorCode err = U_ZERO_ERROR;
-    ucnv_setToUCallBack(cnv, UCNV_TO_U_CALLBACK_STOP, NULL, NULL, NULL, &err);
 
     long capa = utf16_bytesize_approximation(self->encoding, self->length_in_bytes);
     const char *source_pos = self->data.bytes;
@@ -575,18 +612,18 @@ static bool str_try_making_data_utf16(string_t *self)
 	    buffer = xrealloc(buffer, capa);
 	    target_pos = buffer + index;
 	}
-	else if (U_FAILURE(err)) {
-	    ucnv_close(cnv);
-	    return false;
-	}
 	else {
+	    // we should not have any conversion error
+	    // because the encoding is valid
+	    assert(U_SUCCESS(err));
 	    break;
 	}
     }
 
     ucnv_close(cnv);
 
-    self->data_in_utf16 = true;
+    self->stored_in_uchars = true;
+    self->valid_encoding = true;
     self->capacity_in_bytes = capa;
     self->length_in_bytes = UCHARS_TO_BYTES(target_pos - buffer);
     GC_WB(&self->data.uchars, buffer);
@@ -599,7 +636,7 @@ static long str_length(string_t *self, bool ucs2_mode)
     if (self->length_in_bytes == 0) {
 	return 0;
     }
-    if (self->data_in_utf16) {
+    if (self->stored_in_uchars) {
 	if (ucs2_mode) {
 	    return BYTES_TO_UCHARS(self->length_in_bytes);
 	}
@@ -647,17 +684,16 @@ static long str_length(string_t *self, bool ucs2_mode)
 #define STACK_BUFFER_SIZE 1024
 static long str_bytesize(string_t *self)
 {
-    if (self->data_in_utf16) {
+    if (self->stored_in_uchars) {
 	if (UTF16_ENC(self->encoding)) {
 	    return self->length_in_bytes;
 	}
 	else {
 	    // for strings stored in UTF-16 for which the Ruby encoding is not UTF-16,
-	    // calculate the length this string would have if it was in this encoding
+	    // we have to convert back the string in its original encoding to get the length in bytes
 	    USE_CONVERTER(cnv, self);
 
 	    UErrorCode err = U_ZERO_ERROR;
-	    ucnv_setFromUCallBack(cnv, UCNV_FROM_U_CALLBACK_STOP, NULL, NULL, NULL, &err);
 
 	    long len = 0;
 	    char buffer[STACK_BUFFER_SIZE];
@@ -687,7 +723,7 @@ static long str_bytesize(string_t *self)
 
 static bool str_getbyte(string_t *self, long index, unsigned char *c)
 {
-    if (self->data_in_utf16 && UTF16_ENC(self->encoding)) {
+    if (self->stored_in_uchars && UTF16_ENC(self->encoding)) {
 	if (index < 0) {
 	    index += self->length_in_bytes;
 	    if (index < 0) {
@@ -748,20 +784,13 @@ static void str_force_encoding(string_t *self, encoding_t *enc)
     }
     str_make_data_binary(self);
     self->encoding = enc;
+    str_update_validity(self);
     str_try_making_data_utf16(self);
 }
 
 static bool str_is_valid_encoding(string_t *self)
 {
-    // binary strings and strings in UTF-16 mode are always valid
-    if (self->data_in_utf16 || BINARY_ENC(self->encoding)) {
-	return true;
-    }
-    if (UTF16_ENC(self->encoding)) {
-	return str_is_valid_utf16(self);
-    }
-    // if we couldn't make the string UTF-16, the encoding is not valid
-    return str_try_making_data_utf16(self);
+    return self->valid_encoding;
 }
 
 static bool str_is_ascii_only(string_t *self)
@@ -769,7 +798,8 @@ static bool str_is_ascii_only(string_t *self)
     if (!self->encoding->ascii_compatible) {
 	return false;
     }
-    if (self->data_in_utf16) {
+
+    if (self->stored_in_uchars) {
 	long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);
 	for (long i = 0; i < uchars_count; ++i) {
 	    if (self->data.uchars[i] >= 128) {
@@ -791,10 +821,11 @@ static string_t *str_copy_part(string_t *self, long offset_in_bytes, long length
 {
     string_t *str = str_alloc();
     str->encoding = self->encoding;
-    str->data_in_utf16 = self->data_in_utf16;
     str->capacity_in_bytes = str->length_in_bytes = length_in_bytes;
+    str->stored_in_uchars = self->stored_in_uchars;
     GC_WB(&str->data.bytes, xmalloc(length_in_bytes));
     memcpy(str->data.bytes, &self->data.bytes[offset_in_bytes], length_in_bytes);
+    str_update_validity(str);
     return str;
 }
 
@@ -825,7 +856,7 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
     if (self->length_in_bytes == 0) {
 	return NULL;
     }
-    if (self->data_in_utf16) {
+    if (self->stored_in_uchars) {
 	if (ucs2_mode) {
 	    string_t *str = str_get_character_fixed_width(self, index, 2);
 	    if ((str != NULL) && U16_IS_SURROGATE(str->data.uchars[0])) {
@@ -835,9 +866,6 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
 		    //  UTF-8 or UTF-32 but that would be incorrect Unicode)
 		    str_cannot_cut_surrogate();
 		}
-		// if a surrogate pair was cut in two, the encoding is not valid anymore
-		// so we make the string binary (data in UTF-16 must be valid)
-		str_make_data_binary(str);
 	    }
 	    return str;
 	}
@@ -1054,9 +1082,9 @@ static VALUE mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
     }
 }
 
-static VALUE mr_str_is_data_in_utf16(VALUE self, SEL sel)
+static VALUE mr_str_is_stored_in_uchars(VALUE self, SEL sel)
 {
-    return STR(self)->data_in_utf16 ? Qtrue : Qfalse;
+    return STR(self)->stored_in_uchars ? Qtrue : Qfalse;
 }
 
 void Init_MRString(void)
@@ -1082,7 +1110,7 @@ void Init_MRString(void)
     rb_objc_define_method(rb_cMRString, "[]", mr_str_aref, -1);
 
     // this method does not exist in Ruby and is there only for debugging purpose
-    rb_objc_define_method(rb_cMRString, "data_in_utf16?", mr_str_is_data_in_utf16, 0);
+    rb_objc_define_method(rb_cMRString, "stored_in_uchars?", mr_str_is_stored_in_uchars, 0);
 }
 
 void Init_new_string(void)
