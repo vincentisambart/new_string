@@ -334,17 +334,19 @@ typedef struct {
 	); \
     ucnv_reset(cnv);
 
-static void invert_byte_order(string_t *self)
+static void str_invert_byte_order(string_t *self)
 {
     long length_in_bytes = self->length_in_bytes;
     char *bytes = self->data.bytes;
 
+    assert(NON_NATIVE_UTF16_ENC(self->encoding));
     assert((length_in_bytes & 1) == 0);
     for (long i = 0; i < length_in_bytes; i += 2) {
 	char tmp = bytes[i];
 	bytes[i] = bytes[i+1];
 	bytes[i+1] = tmp;
     }
+    self->stored_in_uchars = !self->stored_in_uchars;
 }
 
 static string_t *str_alloc(void)
@@ -476,8 +478,7 @@ static void str_make_data_binary(string_t *self)
     if (NON_NATIVE_UTF16_ENC(self->encoding)) {
 	// Doing the conversion ourself is faster, and anyway ICU's converter
 	// does not like non-paired surrogates.
-	invert_byte_order(self);
-	self->stored_in_uchars = false;
+	str_invert_byte_order(self);
 	return;
     }
 
@@ -581,8 +582,7 @@ static bool str_try_making_data_utf16(string_t *self)
 	return true;
     }
     else if (NON_NATIVE_UTF16_ENC(self->encoding)) {
-	invert_byte_order(self);
-	self->stored_in_uchars = true;
+	str_invert_byte_order(self);
 	return true;
     }
     else if (BINARY_ENC(self->encoding)) {
