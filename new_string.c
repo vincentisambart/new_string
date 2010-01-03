@@ -336,11 +336,15 @@ typedef struct {
 
 static void str_invert_byte_order(string_t *self)
 {
+    assert(NON_NATIVE_UTF16_ENC(self->encoding));
+
     long length_in_bytes = self->length_in_bytes;
     char *bytes = self->data.bytes;
 
-    assert(NON_NATIVE_UTF16_ENC(self->encoding));
-    assert((length_in_bytes & 1) == 0);
+    if (length_in_bytes & 0x1) {
+	--length_in_bytes;
+    }
+
     for (long i = 0; i < length_in_bytes; i += 2) {
 	char tmp = bytes[i];
 	bytes[i] = bytes[i+1];
@@ -372,16 +376,16 @@ static bool str_is_valid_utf16(string_t *self);
 
 static void str_update_validity(string_t *self)
 {
-    if (self->length_in_bytes == 0) {
-	self->valid_encoding = true;
-    }
-    else if (BINARY_ENC(self->encoding)) {
+    if ((self->length_in_bytes == 0) || BINARY_ENC(self->encoding)) {
 	self->valid_encoding = true;
     }
     else if (UTF16_ENC(self->encoding)) {
 	self->valid_encoding = str_is_valid_utf16(self);
     }
     else if (self->stored_in_uchars) {
+	// if the encoding is not UTF-16 but it's stored in uchars,
+	// it means we did the conversion without any problem
+	// so it's a valid encoding
 	self->valid_encoding = true;
     }
     else {
@@ -531,6 +535,11 @@ static long utf16_bytesize_approximation(encoding_t *enc, int bytesize)
 static bool str_is_valid_utf16(string_t *self)
 {
     assert(UTF16_ENC(self->encoding));
+
+    // if the length is an odd number, it can't be valid UTF-16
+    if (self->length_in_bytes & 0x1) {
+	return false;
+    }
 
     UChar *uchars = self->data.uchars;
     long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);

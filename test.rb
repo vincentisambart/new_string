@@ -157,6 +157,20 @@ SURROGATE_WITH_INVALID_BYTES = [0x00, 0x02, 0x00, 0x0B, 0xFF, 0xFF, 0xFF, 0xFF]
   end
 end
 
+UNICODE_ENCODINGS.each do |enc|
+  data = read_data('cut', enc)
+
+  assert_equal false, data.valid_encoding?
+  case enc
+  when :UTF8
+    assert_equal 26, data.bytesize
+  when :UTF16_BE, :UTF_16LE
+    assert_equal 17, data.bytesize
+  when :UTF32_BE, :UTF_32LE
+    assert_equal 35, data.bytesize
+  end
+end
+
 if $tests_failed_count == 0
   puts "everything's fine"
 else
