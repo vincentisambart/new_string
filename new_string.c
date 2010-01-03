@@ -688,21 +688,20 @@ static long str_length(string_t *self, bool ucs2_mode)
 	    const char *end = pos + self->length_in_bytes;
 	    long len = 0;
 	    for (;;) {
+		const char *character_start_pos = pos;
 		// iterate through the string one Unicode code point at a time
 		// (we dont care what the character is or if it's valid or not)
 		UErrorCode err = U_ZERO_ERROR;
-		const char *char_start_pos = pos;
 		UChar32 c = ucnv_getNextUChar(cnv, &pos, end, &err);
 		if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
 		    // end of the string
 		    break;
 		}
 		else if (U_FAILURE(err)) {
-		    long diff = pos - char_start_pos;
-		    len += diff / self->encoding->min_char_size;
-		    if (diff % self->encoding->min_char_size > 0) {
-			len += 1;
-		    }
+		    long min_char_size = self->encoding->min_char_size;
+		    long converted_width = pos - character_start_pos;
+		    // division of converted_width by min_char_size rounded up
+		    len += (converted_width + (min_char_size - 1)) / min_char_size;
 		}
 		else {
 		    if (ucs2_mode && !U_IS_BMP(c)) {
@@ -992,24 +991,41 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
 		    ucnv_close(cnv);
 		    return NULL;
 		}
-		if (ucs2_mode && U_SUCCESS(err) && !U_IS_BMP(c)) {
-		    if ((current_index == index) || (current_index+1 == index)) {
-			// you can't cut a surrogate in an encoding that is not UTF-16
-			// (it's in theory possible to store the surrogate in
-			//  UTF-8 or UTF-32 but that would be incorrect Unicode)
-			str_cannot_cut_surrogate();
+		long offset_in_bytes = character_start_pos - self->data.bytes;
+		long converted_width = pos - character_start_pos;
+		if (U_FAILURE(err)) {
+		    long min_char_size = self->encoding->min_char_size;
+		    // division of converted_width by min_char_size rounded up
+		    long diff = (converted_width + (min_char_size - 1)) / min_char_size;
+		    if (current_index == index) {
+			ucnv_close(cnv);
+			return str_copy_part(self, offset_in_bytes, min_char_size);
 		    }
+		    else if (current_index + diff > index) {
+			ucnv_close(cnv);
+			long adjusted_offset = offset_in_bytes + (index - current_index) * min_char_size;
+			return str_copy_part(self, adjusted_offset, min_char_size);
+		    }
+		    current_index += diff;
+		}
+		else {
+		    if (ucs2_mode && !U_IS_BMP(c)) {
+			if ((current_index == index) || (current_index+1 == index)) {
+			    // you can't cut a surrogate in an encoding that is not UTF-16
+			    // (it's in theory possible to store the surrogate in
+			    //  UTF-8 or UTF-32 but that would be incorrect Unicode)
+			    str_cannot_cut_surrogate();
+			}
+			++current_index;
+		    }
+
+		    if (current_index == index) {
+			ucnv_close(cnv);
+			return str_copy_part(self, offset_in_bytes, converted_width);
+		    }
+
 		    ++current_index;
 		}
-
-		if (current_index == index) {
-		    long offset_in_bytes = character_start_pos - self->data.bytes;
-		    long character_width = pos - character_start_pos;
-		    ucnv_close(cnv);
-		    return str_copy_part(self, offset_in_bytes, character_width);
-		}
-
-		++current_index;
 	    }
 	}
     }

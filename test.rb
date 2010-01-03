@@ -164,18 +164,17 @@ end
 UNICODE_ENCODINGS.each do |enc|
   data = read_data('cut', enc)
 
-  puts enc
   assert_equal false, data.valid_encoding?
   if enc == :UTF_8
     assert_equal 10, data.length
     assert_equal 10, data.chars_count if MACRUBY
-    #c1, c2 = data[8], data[9]
-    #assert_equal 1, c1.length
-    #assert_equal 1, c1.bytesize
-    #assert_equal 0xE3, c1.getbyte(0)
-    #assert_equal 1, c2.length
-    #assert_equal 1, c2.bytesize
-    #assert_equal 0x81, c2.getbyte(0)
+    c1, c2 = data[8], data[9]
+    assert_equal 1, c1.length
+    assert_equal 1, c1.bytesize
+    assert_equal 0xE3, c1.getbyte(0)
+    assert_equal 1, c2.length
+    assert_equal 1, c2.bytesize
+    assert_equal 0x81, c2.getbyte(0)
   else
     assert_equal 9, data.length
     assert_equal 9, data.chars_count if MACRUBY
