@@ -324,6 +324,11 @@ typedef struct {
 
 #define ODD_NUMBER(x) ((x) & 0x1)
 
+static long div_round_up(long a, long b)
+{
+    return ((a) + (b - 1)) / b;
+}
+
 // do not forget to close the converter
 // before leaving the function
 #define USE_CONVERTER(cnv, str) \
@@ -701,7 +706,7 @@ static long str_length(string_t *self, bool ucs2_mode)
 		    long min_char_size = self->encoding->min_char_size;
 		    long converted_width = pos - character_start_pos;
 		    // division of converted_width by min_char_size rounded up
-		    len += (converted_width + (min_char_size - 1)) / min_char_size;
+		    len += div_round_up(converted_width, min_char_size);
 		}
 		else {
 		    if (ucs2_mode && !U_IS_BMP(c)) {
@@ -874,7 +879,7 @@ NORETURN(static void str_cannot_cut_surrogate(void))
 
 static string_t *str_get_character_fixed_width(string_t *self, long index, long character_width)
 {
-    long len = self->length_in_bytes / character_width;
+    long len = div_round_up(self->length_in_bytes, character_width);
     if (index < 0) {
 	index += len;
 	if (index < 0) {
@@ -885,7 +890,11 @@ static string_t *str_get_character_fixed_width(string_t *self, long index, long 
 	return NULL;
     }
 
+    // if the string is truncated we can have a character that's smaller
     long offset_in_bytes = index * character_width;
+    if (offset_in_bytes + character_width > self->length_in_bytes) {
+	character_width = self->length_in_bytes - offset_in_bytes;
+    }
     return str_copy_part(self, offset_in_bytes, character_width);
 }
 
@@ -996,15 +1005,28 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
 		if (U_FAILURE(err)) {
 		    long min_char_size = self->encoding->min_char_size;
 		    // division of converted_width by min_char_size rounded up
-		    long diff = (converted_width + (min_char_size - 1)) / min_char_size;
+		    long diff = div_round_up(converted_width, min_char_size);
+		    long length_in_bytes;
 		    if (current_index == index) {
+			if (min_char_size > converted_width) {
+			    length_in_bytes = converted_width;
+			}
+			else {
+			    length_in_bytes = min_char_size;
+			}
 			ucnv_close(cnv);
-			return str_copy_part(self, offset_in_bytes, min_char_size);
+			return str_copy_part(self, offset_in_bytes, length_in_bytes);
 		    }
 		    else if (current_index + diff > index) {
-			ucnv_close(cnv);
 			long adjusted_offset = offset_in_bytes + (index - current_index) * min_char_size;
-			return str_copy_part(self, adjusted_offset, min_char_size);
+			if (adjusted_offset + min_char_size > offset_in_bytes + converted_width) {
+			    length_in_bytes = offset_in_bytes + converted_width - adjusted_offset;
+			}
+			else {
+			    length_in_bytes = min_char_size;
+			}
+			ucnv_close(cnv);
+			return str_copy_part(self, adjusted_offset, length_in_bytes);
 		    }
 		    current_index += diff;
 		}
