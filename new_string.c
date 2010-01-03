@@ -31,6 +31,7 @@ typedef struct {
     const char *public_name;
     const char **aliases;
     unsigned int aliases_count;
+    unsigned char min_char_size;
     bool single_byte_encoding : 1;
     bool ascii_compatible : 1;
     UConverter *converter;
@@ -185,6 +186,7 @@ static void define_encoding_constant(const char *name, encoding_t *enc)
 static void add_encoding(
 	unsigned int encoding_index, // index of the encoding in the encodings array
 	const char *public_name, // public name for the encoding
+	unsigned char min_char_size,
 	bool single_byte_encoding, // in the encoding a character takes only one byte
 	bool ascii_compatible, // is the encoding ASCII compatible or not
 	... // aliases for the encoding (should no include the public name) - must end with a NULL
@@ -236,6 +238,7 @@ static void add_encoding(
     // fill the fields
     enc->index = encoding_index;
     enc->public_name = public_name;
+    enc->min_char_size = min_char_size;
     enc->single_byte_encoding = single_byte_encoding;
     enc->ascii_compatible = ascii_compatible;
     enc->aliases_count = aliases_count;
@@ -251,18 +254,18 @@ static void add_encoding(
 
 static void create_encodings(void)
 {
-    add_encoding(ENCODING_BINARY,    "ASCII-8BIT",  true,  true,  "BINARY", NULL);
-    add_encoding(ENCODING_ASCII,     "US-ASCII",    true,  true,  "ASCII", "ANSI_X3.4-1968", "646", NULL);
-    add_encoding(ENCODING_UTF8,      "UTF-8",       false, true,  "CP65001", NULL);
-    add_encoding(ENCODING_UTF16BE,   "UTF-16BE",    false, false, NULL);
-    add_encoding(ENCODING_UTF16LE,   "UTF-16LE",    false, false, NULL);
-    add_encoding(ENCODING_UTF32BE,   "UTF-32BE",    false, false, "UCS-4BE", NULL);
-    add_encoding(ENCODING_UTF32LE,   "UTF-32LE",    false, false, "UCS-4LE", NULL);
-    add_encoding(ENCODING_ISO8859_1, "ISO-8859-1",  true,  true,  "ISO8859-1", NULL);
+    add_encoding(ENCODING_BINARY,    "ASCII-8BIT",  1, true,  true,  "BINARY", NULL);
+    add_encoding(ENCODING_ASCII,     "US-ASCII",    1, true,  true,  "ASCII", "ANSI_X3.4-1968", "646", NULL);
+    add_encoding(ENCODING_UTF8,      "UTF-8",       1, false, true,  "CP65001", NULL);
+    add_encoding(ENCODING_UTF16BE,   "UTF-16BE",    2, false, false, NULL);
+    add_encoding(ENCODING_UTF16LE,   "UTF-16LE",    2, false, false, NULL);
+    add_encoding(ENCODING_UTF32BE,   "UTF-32BE",    4, false, false, "UCS-4BE", NULL);
+    add_encoding(ENCODING_UTF32LE,   "UTF-32LE",    4, false, false, "UCS-4LE", NULL);
+    add_encoding(ENCODING_ISO8859_1, "ISO-8859-1",  1, true,  true,  "ISO8859-1", NULL);
     // FIXME: the ICU conversion tables do not seem to match Ruby's Japanese conversion tables
-    //add_encoding(ENCODING_EUCJP,     "EUC-JP",      0, true,  "eucJP", NULL);
-    //add_encoding(ENCODING_SJIS,      "Shift_JIS",   0, true, "SJIS", NULL);
-    //add_encoding(ENCODING_CP932,     "Windows-31J", 0, true, "CP932", "csWindows31J", NULL);
+    //add_encoding(ENCODING_EUCJP,     "EUC-JP",      1, false, true,  "eucJP", NULL);
+    //add_encoding(ENCODING_SJIS,      "Shift_JIS",   1, false, true, "SJIS", NULL);
+    //add_encoding(ENCODING_CP932,     "Windows-31J", 1, false, true, "CP932", "csWindows31J", NULL);
 
     default_external = encodings[ENCODING_UTF8];
     default_internal = encodings[ENCODING_UTF16_NATIVE];
@@ -319,6 +322,8 @@ typedef struct {
 #define BYTES_TO_UCHARS(len) ((len) / sizeof(UChar))
 #define UCHARS_TO_BYTES(len) ((len) * sizeof(UChar))
 
+#define ODD_NUMBER(x) ((x) & 0x1)
+
 // do not forget to close the converter
 // before leaving the function
 #define USE_CONVERTER(cnv, str) \
@@ -341,7 +346,7 @@ static void str_invert_byte_order(string_t *self)
     long length_in_bytes = self->length_in_bytes;
     char *bytes = self->data.bytes;
 
-    if (length_in_bytes & 0x1) {
+    if (ODD_NUMBER(length_in_bytes)) {
 	--length_in_bytes;
     }
 
@@ -524,7 +529,7 @@ static long utf16_bytesize_approximation(encoding_t *enc, int bytesize)
 	approximation = bytesize * 2;
     }
 
-    if (approximation & 0x1) {
+    if (ODD_NUMBER(approximation)) {
 	// the size must be an even number
 	++approximation;
     }
@@ -537,7 +542,7 @@ static bool str_is_valid_utf16(string_t *self)
     assert(UTF16_ENC(self->encoding));
 
     // if the length is an odd number, it can't be valid UTF-16
-    if (self->length_in_bytes & 0x1) {
+    if (ODD_NUMBER(self->length_in_bytes)) {
 	return false;
     }
 
@@ -646,14 +651,21 @@ static long str_length(string_t *self, bool ucs2_mode)
 	return 0;
     }
     if (self->stored_in_uchars) {
+	long length;
 	if (ucs2_mode) {
-	    return BYTES_TO_UCHARS(self->length_in_bytes);
+	    length = BYTES_TO_UCHARS(self->length_in_bytes);
 	}
 	else {
 	    // we must return the length in Unicode code points,
 	    // not the number of UChars, even if the probability
 	    // we have surrogates is very low
-	    return u_countChar32(self->data.uchars, BYTES_TO_UCHARS(self->length_in_bytes));
+	    length = u_countChar32(self->data.uchars, BYTES_TO_UCHARS(self->length_in_bytes));
+	}
+	if (ODD_NUMBER(self->length_in_bytes)) {
+	    return length + 1;
+	}
+	else {
+	    return length;
 	}
     }
     else {
@@ -661,7 +673,13 @@ static long str_length(string_t *self, bool ucs2_mode)
 	    return self->length_in_bytes;
 	}
 	else if (ucs2_mode && UTF16_ENC(self->encoding)) {
-	    return BYTES_TO_UCHARS(self->length_in_bytes);
+	    long length = BYTES_TO_UCHARS(self->length_in_bytes);
+	    if (ODD_NUMBER(self->length_in_bytes)) {
+		return length + 1;
+	    }
+	    else {
+		return length;
+	    }
 	}
 	else {
 	    USE_CONVERTER(cnv, self);
@@ -673,14 +691,26 @@ static long str_length(string_t *self, bool ucs2_mode)
 		// iterate through the string one Unicode code point at a time
 		// (we dont care what the character is or if it's valid or not)
 		UErrorCode err = U_ZERO_ERROR;
+		const char *char_start_pos = pos;
 		UChar32 c = ucnv_getNextUChar(cnv, &pos, end, &err);
 		if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
 		    // end of the string
 		    break;
 		}
-		++len;
-		if (ucs2_mode && U_SUCCESS(err) && !U_IS_BMP(c)) {
-		    ++len;
+		else if (U_FAILURE(err)) {
+		    long diff = pos - char_start_pos;
+		    len += diff / self->encoding->min_char_size;
+		    if (diff % self->encoding->min_char_size > 0) {
+			len += 1;
+		    }
+		}
+		else {
+		    if (ucs2_mode && !U_IS_BMP(c)) {
+			len += 2;
+		    }
+		    else {
+			++len;
+		    }
 		}
 	    }
 
