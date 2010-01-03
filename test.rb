@@ -11,8 +11,8 @@ end
 
 UNICODE_ENCODINGS = [:UTF_8, :UTF_16BE, :UTF_16LE, :UTF_32BE, :UTF_32LE]
 
-def read_data(name, encoding)
-  enc_for_name = encoding.to_s.gsub(/_/, '').downcase
+def read_data(name, enc_name)
+  enc_for_name = enc_name.to_s.gsub(/_/, '').downcase
   file_name = File.join(File.dirname(__FILE__), "test_data/#{name}-#{enc_for_name}.txt")
   data = nil
   if MACRUBY
@@ -22,7 +22,9 @@ def read_data(name, encoding)
       data = f.read
     end
   end
-  data.force_encoding(E.const_get(encoding))
+  enc = E.const_get(enc_name)
+  $current_encoding = enc
+  data.force_encoding(enc)
   data
 end
 
@@ -42,7 +44,7 @@ def assert_equal(wanted, got)
   $tests_done_count += 1
   if wanted != got
     $tests_failed_count += 1
-    puts "test failed: #{wanted} != #{got} at line #{called_line}"
+    puts "test failed: #{wanted} != #{got} at line #{called_line} (encoding: #{$current_encoding.name})"
   end
 end
 
@@ -52,7 +54,7 @@ def assert_no_exception_raised
     yield
   rescue Exception
     $tests_failed_count += 1
-    puts "test failed: exception raised at line #{called_line}"
+    puts "test failed: exception raised at line #{called_line} (encoding: #{$current_encoding.name})"
   end
 end
 
@@ -64,7 +66,7 @@ def assert_exception_raised(exception)
     # we got the exception we wanted
   else
     $tests_failed_count += 1
-    puts "test failed: exception #{exception.name} not raised at line #{called_line}"
+    puts "test failed: exception #{exception.name} not raised at line #{called_line} (encoding: #{$current_encoding.name})"
   end
 end
 
