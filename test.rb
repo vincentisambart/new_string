@@ -118,6 +118,7 @@ UNICODE_ENCODINGS.each do |enc|
         assert_exception_raised(IndexError) { data[i] }
       end
     end
+    assert_equal 1, data.chars_count
   else
     assert_equal 1, data.length
   end
@@ -152,6 +153,7 @@ SURROGATE_WITH_INVALID_BYTES = [0x00, 0x02, 0x00, 0x0B, 0xFF, 0xFF, 0xFF, 0xFF]
     assert_exception_raised(IndexError) { data[0] }
     assert_exception_raised(IndexError) { data[1] }
     assert_no_exception_raised { data[2] }
+    assert_equal 2, data.chars_count
   else
     assert_equal 2, data.length
   end

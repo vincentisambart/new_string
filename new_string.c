@@ -1010,6 +1010,11 @@ static VALUE mr_str_clear(VALUE self, SEL sel)
     return self;
 }
 
+static VALUE mr_str_chars_count(VALUE self, SEL sel)
+{
+    return INT2NUM(str_length(STR(self), false));
+}
+
 static VALUE mr_str_length(VALUE self, SEL sel)
 {
     return INT2NUM(str_length(STR(self), true));
@@ -1117,6 +1122,9 @@ void Init_MRString(void)
     rb_objc_define_method(rb_cMRString, "valid_encoding?", mr_str_is_valid_encoding, 0);
     rb_objc_define_method(rb_cMRString, "ascii_only?", mr_str_is_ascii_only, 0);
     rb_objc_define_method(rb_cMRString, "[]", mr_str_aref, -1);
+
+    // added for MacRuby
+    rb_objc_define_method(rb_cMRString, "chars_count", mr_str_chars_count, 0);
 
     // this method does not exist in Ruby and is there only for debugging purpose
     rb_objc_define_method(rb_cMRString, "stored_in_uchars?", mr_str_is_stored_in_uchars, 0);
