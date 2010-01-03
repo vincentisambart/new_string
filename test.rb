@@ -167,6 +167,7 @@ UNICODE_ENCODINGS.each do |enc|
   data = read_data('cut', enc)
 
   assert_equal false, data.valid_encoding?
+  assert_equal false, data[-1].valid_encoding?
   if enc == :UTF_8
     assert_equal 10, data.length
     assert_equal 10, data.chars_count if MACRUBY
@@ -187,6 +188,14 @@ UNICODE_ENCODINGS.each do |enc|
     assert_equal 26, data.bytesize
   when :UTF_16BE, :UTF_16LE
     assert_equal 17, data.bytesize
+
+    c = data[-1]
+    assert_equal 1, c.bytesize
+    if enc == :UTF_16BE
+      assert_equal 0x30, c.getbyte(0)
+    else
+      assert_equal 0x59, c.getbyte(0)
+    end
   when :UTF_32BE, :UTF_32LE
     assert_equal 35, data.bytesize
   end
