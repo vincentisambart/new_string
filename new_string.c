@@ -315,6 +315,8 @@ typedef struct {
     } data;
     bool stored_in_uchars : 1;
     bool valid_encoding : 1;
+    bool ascii_only : 1;
+    bool has_supplementary : 1;
 } string_t;
 
 #define STR(x) ((string_t *)(x))
@@ -374,6 +376,8 @@ static string_t *str_alloc(void)
     str->data.bytes = NULL;
     str->valid_encoding = true;
     str->stored_in_uchars = false;
+    str->has_supplementary = false;
+    str->ascii_compatible = false;
     return str;
 }
 
@@ -382,41 +386,121 @@ static VALUE mr_str_s_alloc(VALUE klass)
     return (VALUE)str_alloc();
 }
 
-static bool str_is_valid_utf16(string_t *self);
+static void str_update_flags_utf16(string_t *self)
+{
+    assert(UTF16_ENC(self->encoding));
+
+    // if the length is an odd number, it can't be valid UTF-16
+    if (ODD_NUMBER(self->length_in_bytes)) {
+	self->valid_encoding = false;
+    }
+    else {
+	self->valid_encoding = true;
+    }
+    self->has_supplementary = false;
+    self->ascii_compatible = true;
+
+    UChar *uchars = self->data.uchars;
+    long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);
+    bool native_byte_order = self->stored_in_uchars;
+    UChar32 lead = 0;
+    for (int i = 0; i < uchars_count; ++i) {
+	UChar32 c;
+	if (native_byte_order) {
+	    c = uchars[i];
+	}
+	else {
+	    uint8_t *bytes = (uint8_t *)&uchars[i];
+	    c = (uint16_t)bytes[0] << 8 | (uint16_t)bytes[1];
+	}
+	if (U16_IS_SURROGATE(c)) { // surrogate
+	    if (U16_IS_SURROGATE_LEAD(c)) { // lead surrogate
+		// a lead surrogate should not be
+		// after an other lead surrogate
+		if (lead != 0) {
+		    self->valid_encoding = false;
+		}
+		lead = c;
+	    }
+	    else { // trail surrogate
+		// a trail surrogate must follow a lead surrogate
+		if (lead == 0) {
+		    self->valid_encoding = false;
+		}
+		else if () {
+		    self->has_supplementary = true;
+		    c = U16_GET_SUPPLEMENTARY(lead, c);
+		    if (!U_IS_UNICODE_CHAR(c)) {
+			self->valid_encoding = false;
+		    }
+		}
+		lead = 0;
+	    }
+	}
+	else { // not a surrogate
+	    // a non-surrogate character should not be after a lead surrogate
+	    // and it should be a valid Unicode character
+	    // Warning: Ruby 1.9 does not do the IS_UNICODE_CHAR check
+	    // (for 1.9, 0xffff is valid though it's not a Unicode character)
+	    if ((lead != 0) || !U_IS_UNICODE_CHAR(c)) {
+		self->valid_encoding = false;
+	    }
+
+	    if (c > 127) {
+		self->ascii_compatible = false;
+	    }
+	}
+    }
+    // the last character should not be a lead surrogate
+    if (lead != 0) {
+	self->valid_encoding = false;
+    }
+    if (!self->valid_encoding) {
+	self->ascii_compatible = false;
+    }
+}
 
 static void str_update_flags(string_t *self)
 {
     if ((self->length_in_bytes == 0) || BINARY_ENC(self->encoding)) {
 	self->valid_encoding = true;
+	self->ascii_compatible = true;
+	self->has_supplementary = false;
     }
-    else if (UTF16_ENC(self->encoding)) {
-	self->valid_encoding = str_is_valid_utf16(self);
-    }
-    else if (self->stored_in_uchars) {
-	// if the encoding is not UTF-16 but it's stored in uchars,
-	// it means we did the conversion without any problem
-	// so it's a valid encoding
-	self->valid_encoding = true;
+    else if (self->stored_in_uchars || UTF16_ENC(self->encoding)) {
+	str_update_flags_utf16(self);
     }
     else {
 	USE_CONVERTER(cnv, self);
+
+	self->ascii_compatible = true;
+	self->valid_encoding = true;
+	self->has_supplementary = false;
 
 	const char *pos = self->data.bytes;
 	const char *end = pos + self->length_in_bytes;
 	for (;;) {
 	    // iterate through the string one Unicode code point at a time
 	    UErrorCode err = U_ZERO_ERROR;
-	    ucnv_getNextUChar(cnv, &pos, end, &err);
+	    UChar32 c = ucnv_getNextUChar(cnv, &pos, end, &err);
 	    if (U_FAILURE(err)) {
 		if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
 		    // end of the string
-		    self->valid_encoding = true;
+		    break;
 		}
 		else {
 		    // conversion error
 		    self->valid_encoding = false;
+		    self->ascii_compatible = false;
 		}
-		break;
+	    }
+	    else {
+		if (c > 127) {
+		    self->ascii_compatible = false;
+		    if (U_IS_SUPPLEMENTARY(c)) {
+			self->has_supplementary = true;
+		    }
+		}
 	    }
 	}
 
@@ -464,6 +548,8 @@ static void str_replace(string_t *self, VALUE arg)
 	self->capacity_in_bytes = self->length_in_bytes = str->length_in_bytes;
 	self->stored_in_uchars = str->stored_in_uchars;
 	self->valid_encoding = str->valid_encoding;
+	self->has_supplementary = str->has_supplementary;
+	self->ascii_only = str->ascii_only;
 	if (self->length_in_bytes != 0) {
 	    GC_WB(self->data.bytes, xmalloc(self->length_in_bytes));
 	    memcpy(self->data.bytes, str->data.bytes, self->length_in_bytes);
@@ -540,59 +626,6 @@ static long utf16_bytesize_approximation(encoding_t *enc, int bytesize)
     }
 
     return approximation;
-}
-
-static bool str_is_valid_utf16(string_t *self)
-{
-    assert(UTF16_ENC(self->encoding));
-
-    // if the length is an odd number, it can't be valid UTF-16
-    if (ODD_NUMBER(self->length_in_bytes)) {
-	return false;
-    }
-
-    UChar *uchars = self->data.uchars;
-    long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);
-    bool native_byte_order = self->stored_in_uchars;
-    UChar32 lead = 0;
-    for (int i = 0; i < uchars_count; ++i) {
-	UChar32 c;
-	if (native_byte_order) {
-	    c = uchars[i];
-	}
-	else {
-	    uint8_t *bytes = (uint8_t *)&uchars[i];
-	    c = (uint16_t)bytes[0] << 8 | (uint16_t)bytes[1];
-	}
-	if (U16_IS_SURROGATE(c)) { // surrogate
-	    if (U16_IS_SURROGATE_LEAD(c)) { // lead surrogate
-		// a lead surrogate should not be
-		// after an other lead surrogate
-		if (lead != 0) {
-		    return false;
-		}
-		lead = c;
-	    }
-	    else { // trail surrogate
-		// a trail surrogate must follow a lead surrogate
-		if (lead == 0) {
-		    return false;
-		}
-		lead = 0;
-	    }
-	}
-	else { // not a surrogate
-	    // a non-surrogate character should not be after a lead surrogate
-	    // and it should be a valid Unicode character
-	    // Warning: Ruby 1.9 does not do the IS_UNICODE_CHAR check
-	    // (for 1.9, 0xffff is valid though it's not a Unicode character)
-	    if ((lead != 0) || !U_IS_UNICODE_CHAR(c)) {
-		return false;
-	    }
-	}
-    }
-    // the last character should not be a lead surrogate
-    return (lead == 0);
 }
 
 static bool str_try_making_data_utf16(string_t *self)
@@ -838,26 +871,13 @@ static bool str_is_valid_encoding(string_t *self)
 
 static bool str_is_ascii_only(string_t *self)
 {
+    // for MRI, a string in a non-ASCII-compatible encoding (like UTF-16)
+    // containing only ASCII characters is not "ASCII only" though for us it is internally
     if (!self->encoding->ascii_compatible) {
 	return false;
     }
 
-    if (self->stored_in_uchars) {
-	long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);
-	for (long i = 0; i < uchars_count; ++i) {
-	    if (self->data.uchars[i] >= 128) {
-		return false;
-	    }
-	}
-    }
-    else {
-	for (long i = 0; i < self->length_in_bytes; ++i) {
-	    if ((unsigned char)self->data.bytes[i] >= 128) {
-		return false;
-	    }
-	}
-    }
-    return true;
+    return self->ascii_only;
 }
 
 static string_t *str_copy_part(string_t *self, long offset_in_bytes, long length_in_bytes)
