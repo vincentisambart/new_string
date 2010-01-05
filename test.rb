@@ -123,6 +123,8 @@ UNICODE_ENCODINGS.each do |enc|
       end
     end
     assert_equal 1, data.chars_count
+    assert_equal 2, data.getchar(0).bytesize
+    assert_equal nil, data.getchar(1)
   else
     assert_equal 1, data.length
   end

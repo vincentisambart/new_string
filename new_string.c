@@ -384,7 +384,7 @@ static VALUE mr_str_s_alloc(VALUE klass)
 
 static bool str_is_valid_utf16(string_t *self);
 
-static void str_update_validity(string_t *self)
+static void str_update_flags(string_t *self)
 {
     if ((self->length_in_bytes == 0) || BINARY_ENC(self->encoding)) {
 	self->valid_encoding = true;
@@ -442,7 +442,7 @@ static void str_replace(string_t *self, VALUE arg)
 	    GC_WB(&self->data.bytes, xmalloc(self->length_in_bytes));
 	    assert(self->data.bytes != NULL);
 	    memcpy(self->data.bytes, rb_bytestring_byte_pointer(arg), self->length_in_bytes);
-	    str_update_validity(self);
+	    str_update_flags(self);
 	}
     }
     else if ((klass == rb_cString)
@@ -455,7 +455,7 @@ static void str_replace(string_t *self, VALUE arg)
 	    GC_WB(&self->data.uchars, xmalloc(self->length_in_bytes));
 	    CFStringGetCharacters((CFStringRef)arg, CFRangeMake(0, BYTES_TO_UCHARS(self->length_in_bytes)), self->data.uchars);
 	    self->stored_in_uchars = true;
-	    str_update_validity(self);
+	    str_update_flags(self);
 	}
     }
     else if (klass == rb_cMRString) {
@@ -827,7 +827,7 @@ static void str_force_encoding(string_t *self, encoding_t *enc)
     }
     str_make_data_binary(self);
     self->encoding = enc;
-    str_update_validity(self);
+    str_update_flags(self);
     str_try_making_data_utf16(self);
 }
 
@@ -868,7 +868,7 @@ static string_t *str_copy_part(string_t *self, long offset_in_bytes, long length
     str->stored_in_uchars = self->stored_in_uchars;
     GC_WB(&str->data.bytes, xmalloc(length_in_bytes));
     memcpy(str->data.bytes, &self->data.bytes[offset_in_bytes], length_in_bytes);
-    str_update_validity(str);
+    str_update_flags(str);
     return str;
 }
 
@@ -890,7 +890,7 @@ static string_t *str_get_character_fixed_width(string_t *self, long index, long 
 	return NULL;
     }
 
-    // if the string is truncated we can have a character that's smaller
+    // if the string is truncated we can have less data than the character's width
     long offset_in_bytes = index * character_width;
     if (offset_in_bytes + character_width > self->length_in_bytes) {
 	character_width = self->length_in_bytes - offset_in_bytes;
@@ -929,6 +929,7 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
 		// count the characters from the end
 		offset = uchars_count;
 		while ((offset > 0) && (index < 0)) {
+		    // FIXME: we are not sure the UTF-16 is well formed without checking the valid_encoding flag
 		    // we suppose here that the UTF-16 is well formed,
 		    // so a trail surrogate is always after a lead surrogate
 		    if (U16_IS_TRAIL(uchars[offset-1])) {
@@ -1164,6 +1165,11 @@ static VALUE mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
     }
 }
 
+static VALUE mr_str_getchar(VALUE self, SEL sel, VALUE index)
+{
+    return str_get_character_at(STR(self), NUM2LONG(index), false);
+}
+
 static VALUE mr_str_is_stored_in_uchars(VALUE self, SEL sel)
 {
     return STR(self)->stored_in_uchars ? Qtrue : Qfalse;
@@ -1193,6 +1199,7 @@ void Init_MRString(void)
 
     // added for MacRuby
     rb_objc_define_method(rb_cMRString, "chars_count", mr_str_chars_count, 0);
+    rb_objc_define_method(rb_cMRString, "getchar", mr_str_getchar, 1);
 
     // this method does not exist in Ruby and is there only for debugging purpose
     rb_objc_define_method(rb_cMRString, "stored_in_uchars?", mr_str_is_stored_in_uchars, 0);
