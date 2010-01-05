@@ -377,7 +377,7 @@ static string_t *str_alloc(void)
     str->valid_encoding = true;
     str->stored_in_uchars = false;
     str->has_supplementary = false;
-    str->ascii_compatible = false;
+    str->ascii_only = false;
     return str;
 }
 
@@ -388,7 +388,7 @@ static VALUE mr_str_s_alloc(VALUE klass)
 
 static void str_update_flags_utf16(string_t *self)
 {
-    assert(UTF16_ENC(self->encoding));
+    assert(self->stored_in_uchars || UTF16_ENC(self->encoding));
 
     // if the length is an odd number, it can't be valid UTF-16
     if (ODD_NUMBER(self->length_in_bytes)) {
@@ -398,7 +398,7 @@ static void str_update_flags_utf16(string_t *self)
 	self->valid_encoding = true;
     }
     self->has_supplementary = false;
-    self->ascii_compatible = true;
+    self->ascii_only = true;
 
     UChar *uchars = self->data.uchars;
     long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);
@@ -427,7 +427,7 @@ static void str_update_flags_utf16(string_t *self)
 		if (lead == 0) {
 		    self->valid_encoding = false;
 		}
-		else if () {
+		else {
 		    self->has_supplementary = true;
 		    c = U16_GET_SUPPLEMENTARY(lead, c);
 		    if (!U_IS_UNICODE_CHAR(c)) {
@@ -447,7 +447,7 @@ static void str_update_flags_utf16(string_t *self)
 	    }
 
 	    if (c > 127) {
-		self->ascii_compatible = false;
+		self->ascii_only = false;
 	    }
 	}
     }
@@ -456,7 +456,7 @@ static void str_update_flags_utf16(string_t *self)
 	self->valid_encoding = false;
     }
     if (!self->valid_encoding) {
-	self->ascii_compatible = false;
+	self->ascii_only = false;
     }
 }
 
@@ -464,7 +464,7 @@ static void str_update_flags(string_t *self)
 {
     if ((self->length_in_bytes == 0) || BINARY_ENC(self->encoding)) {
 	self->valid_encoding = true;
-	self->ascii_compatible = true;
+	self->ascii_only = true;
 	self->has_supplementary = false;
     }
     else if (self->stored_in_uchars || UTF16_ENC(self->encoding)) {
@@ -473,7 +473,7 @@ static void str_update_flags(string_t *self)
     else {
 	USE_CONVERTER(cnv, self);
 
-	self->ascii_compatible = true;
+	self->ascii_only = true;
 	self->valid_encoding = true;
 	self->has_supplementary = false;
 
@@ -491,12 +491,12 @@ static void str_update_flags(string_t *self)
 		else {
 		    // conversion error
 		    self->valid_encoding = false;
-		    self->ascii_compatible = false;
+		    self->ascii_only = false;
 		}
 	    }
 	    else {
 		if (c > 127) {
-		    self->ascii_compatible = false;
+		    self->ascii_only = false;
 		    if (U_IS_SUPPLEMENTARY(c)) {
 			self->has_supplementary = true;
 		    }
@@ -1187,7 +1187,7 @@ static VALUE mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
 
 static VALUE mr_str_getchar(VALUE self, SEL sel, VALUE index)
 {
-    return str_get_character_at(STR(self), NUM2LONG(index), false);
+    return (VALUE)str_get_character_at(STR(self), NUM2LONG(index), false);
 }
 
 static VALUE mr_str_is_stored_in_uchars(VALUE self, SEL sel)
