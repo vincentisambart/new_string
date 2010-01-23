@@ -313,11 +313,17 @@ typedef struct {
 	char *bytes;
 	UChar *uchars;
     } data;
-    bool stored_in_uchars : 1;
-    bool valid_encoding : 1;
-    bool ascii_only : 1;
-    bool has_supplementary : 1;
+    uint8_t flags;
 } string_t;
+
+#define STRING_HAS_SUPPLEMENTARY     0x020
+#define STRING_HAS_SUPPLEMENTARY_SET 0x010
+#define STRING_ASCII_ONLY            0x008
+#define STRING_ASCII_ONLY_SET        0x010
+#define STRING_ASCII_ONLY            0x008
+#define STRING_VALID_ENCODING_SET    0x004
+#define STRING_VALID_ENCODING        0x002
+#define STRING_STORED_IN_UCHARS      0x001
 
 #define STR(x) ((string_t *)(x))
 
@@ -346,6 +352,86 @@ static long div_round_up(long a, long b)
 	); \
     ucnv_reset(cnv);
 
+static void str_unset_facultative_flags(string_t *self)
+{
+    self->flags &= ~STRING_HAS_SUPPLEMENTARY_SET & ~STRING_ASCII_ONLY_SET & ~STRING_VALID_ENCODING_SET;
+}
+
+static void str_update_flags(string_t *self);
+
+static bool str_is_valid_encoding(string_t *self)
+{
+    if (!(self->flags & STRING_VALID_ENCODING_SET)) {
+	str_update_flags(self);
+	assert(self->flags & STRING_VALID_ENCODING_SET);
+    }
+    return self->flags & STRING_VALID_ENCODING;
+}
+
+static bool str_is_ascii_only(string_t *self)
+{
+    if (!(self->flags & STRING_ASCII_ONLY_SET)) {
+	str_update_flags(self);
+	assert(self->flags & STRING_ASCII_ONLY_SET);
+    }
+    return self->flags & STRING_ASCII_ONLY;
+}
+
+static bool str_is_stored_in_uchars(string_t *self)
+{
+    return self->flags & STRING_STORED_IN_UCHARS;
+}
+
+static void str_negate_stored_in_uchars(string_t *self)
+{
+    self->flags ^= STRING_STORED_IN_UCHARS;
+}
+
+static void str_set_stored_in_uchars(string_t *self, bool status)
+{
+    if (status) {
+	self->flags = self->flags | STRING_STORED_IN_UCHARS;
+    }
+    else {
+	self->flags = self->flags & ~STRING_STORED_IN_UCHARS;
+    }
+}
+
+static bool str_already_known_not_to_have_any_supplementary(string_t *self)
+{
+    return (self->flags & (STRING_HAS_SUPPLEMENTARY_SET | STRING_HAS_SUPPLEMENTARY)) == STRING_HAS_SUPPLEMENTARY_SET;
+}
+
+static void str_set_has_supplementary(string_t *self, bool status)
+{
+    if (status) {
+	self->flags = self->flags | STRING_HAS_SUPPLEMENTARY_SET | STRING_HAS_SUPPLEMENTARY;
+    }
+    else {
+	self->flags = (self->flags | STRING_HAS_SUPPLEMENTARY_SET) & ~STRING_HAS_SUPPLEMENTARY;
+    }
+}
+
+static void str_set_ascii_only(string_t *self, bool status)
+{
+    if (status) {
+	self->flags = self->flags | STRING_ASCII_ONLY_SET | STRING_ASCII_ONLY;
+    }
+    else {
+	self->flags = (self->flags | STRING_ASCII_ONLY_SET) & ~STRING_ASCII_ONLY;
+    }
+}
+
+static void str_set_valid_encoding(string_t *self, bool status)
+{
+    if (status) {
+	self->flags = self->flags | STRING_VALID_ENCODING_SET | STRING_VALID_ENCODING;
+    }
+    else {
+	self->flags = (self->flags | STRING_VALID_ENCODING_SET) & ~STRING_VALID_ENCODING;
+    }
+}
+
 static void str_invert_byte_order(string_t *self)
 {
     assert(NON_NATIVE_UTF16_ENC(self->encoding));
@@ -362,8 +448,9 @@ static void str_invert_byte_order(string_t *self)
 	bytes[i] = bytes[i+1];
 	bytes[i+1] = tmp;
     }
-    self->stored_in_uchars = !self->stored_in_uchars;
+    str_negate_stored_in_uchars(self);
 }
+
 
 static string_t *str_alloc(void)
 {
@@ -374,10 +461,7 @@ static string_t *str_alloc(void)
     str->capacity_in_bytes = 0;
     str->length_in_bytes = 0;
     str->data.bytes = NULL;
-    str->valid_encoding = true;
-    str->stored_in_uchars = false;
-    str->has_supplementary = false;
-    str->ascii_only = false;
+    str->flags = 0;
     return str;
 }
 
@@ -388,21 +472,19 @@ static VALUE mr_str_s_alloc(VALUE klass)
 
 static void str_update_flags_utf16(string_t *self)
 {
-    assert(self->stored_in_uchars || UTF16_ENC(self->encoding));
+    assert(str_is_stored_in_uchars(self) || UTF16_ENC(self->encoding));
 
+    bool ascii_only = true;
+    bool has_supplementary = false;
+    bool valid_encoding = true;
     // if the length is an odd number, it can't be valid UTF-16
     if (ODD_NUMBER(self->length_in_bytes)) {
-	self->valid_encoding = false;
+	valid_encoding = false;
     }
-    else {
-	self->valid_encoding = true;
-    }
-    self->has_supplementary = false;
-    self->ascii_only = true;
 
     UChar *uchars = self->data.uchars;
     long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);
-    bool native_byte_order = self->stored_in_uchars;
+    bool native_byte_order = str_is_stored_in_uchars(self);
     UChar32 lead = 0;
     for (int i = 0; i < uchars_count; ++i) {
 	UChar32 c;
@@ -418,20 +500,20 @@ static void str_update_flags_utf16(string_t *self)
 		// a lead surrogate should not be
 		// after an other lead surrogate
 		if (lead != 0) {
-		    self->valid_encoding = false;
+		    valid_encoding = false;
 		}
 		lead = c;
 	    }
 	    else { // trail surrogate
 		// a trail surrogate must follow a lead surrogate
 		if (lead == 0) {
-		    self->valid_encoding = false;
+		    valid_encoding = false;
 		}
 		else {
-		    self->has_supplementary = true;
+		    has_supplementary = true;
 		    c = U16_GET_SUPPLEMENTARY(lead, c);
 		    if (!U_IS_UNICODE_CHAR(c)) {
-			self->valid_encoding = false;
+			valid_encoding = false;
 		    }
 		}
 		lead = 0;
@@ -443,39 +525,46 @@ static void str_update_flags_utf16(string_t *self)
 	    // Warning: Ruby 1.9 does not do the IS_UNICODE_CHAR check
 	    // (for 1.9, 0xffff is valid though it's not a Unicode character)
 	    if ((lead != 0) || !U_IS_UNICODE_CHAR(c)) {
-		self->valid_encoding = false;
+		valid_encoding = false;
 	    }
 
 	    if (c > 127) {
-		self->ascii_only = false;
+		ascii_only = false;
 	    }
 	}
     }
     // the last character should not be a lead surrogate
     if (lead != 0) {
-	self->valid_encoding = false;
+	valid_encoding = false;
     }
-    if (!self->valid_encoding) {
-	self->ascii_only = false;
+
+    str_set_has_supplementary(self, has_supplementary);
+    if (valid_encoding) {
+	str_set_valid_encoding(self, true);
+	str_set_ascii_only(self, ascii_only);
+    }
+    else {
+	str_set_valid_encoding(self, false);
+	str_set_ascii_only(self, false);
     }
 }
 
 static void str_update_flags(string_t *self)
 {
     if ((self->length_in_bytes == 0) || BINARY_ENC(self->encoding)) {
-	self->valid_encoding = true;
-	self->ascii_only = true;
-	self->has_supplementary = false;
+	str_set_valid_encoding(self, false);
+	str_set_ascii_only(self, true);
+	str_set_has_supplementary(self, false);
     }
-    else if (self->stored_in_uchars || UTF16_ENC(self->encoding)) {
+    else if (str_is_stored_in_uchars(self) || UTF16_ENC(self->encoding)) {
 	str_update_flags_utf16(self);
     }
     else {
 	USE_CONVERTER(cnv, self);
 
-	self->ascii_only = true;
-	self->valid_encoding = true;
-	self->has_supplementary = false;
+	bool ascii_only = true;
+	bool valid_encoding = true;
+	bool has_supplementary = false;
 
 	const char *pos = self->data.bytes;
 	const char *end = pos + self->length_in_bytes;
@@ -490,21 +579,25 @@ static void str_update_flags(string_t *self)
 		}
 		else {
 		    // conversion error
-		    self->valid_encoding = false;
-		    self->ascii_only = false;
+		    valid_encoding = false;
+		    ascii_only = false;
 		}
 	    }
 	    else {
 		if (c > 127) {
-		    self->ascii_only = false;
+		    ascii_only = false;
 		    if (U_IS_SUPPLEMENTARY(c)) {
-			self->has_supplementary = true;
+			has_supplementary = true;
 		    }
 		}
 	    }
 	}
 
 	ucnv_close(cnv);
+
+	str_set_has_supplementary(self, has_supplementary);
+	str_set_valid_encoding(self, valid_encoding);
+	str_set_ascii_only(self, ascii_only);
     }
 }
 
@@ -526,7 +619,6 @@ static void str_replace(string_t *self, VALUE arg)
 	    GC_WB(&self->data.bytes, xmalloc(self->length_in_bytes));
 	    assert(self->data.bytes != NULL);
 	    memcpy(self->data.bytes, rb_bytestring_byte_pointer(arg), self->length_in_bytes);
-	    str_update_flags(self);
 	}
     }
     else if ((klass == rb_cString)
@@ -538,18 +630,14 @@ static void str_replace(string_t *self, VALUE arg)
 	if (self->length_in_bytes != 0) {
 	    GC_WB(&self->data.uchars, xmalloc(self->length_in_bytes));
 	    CFStringGetCharacters((CFStringRef)arg, CFRangeMake(0, BYTES_TO_UCHARS(self->length_in_bytes)), self->data.uchars);
-	    self->stored_in_uchars = true;
-	    str_update_flags(self);
+	    str_set_stored_in_uchars(self, true);
 	}
     }
     else if (klass == rb_cMRString) {
 	string_t *str = STR(arg);
 	self->encoding = str->encoding;
 	self->capacity_in_bytes = self->length_in_bytes = str->length_in_bytes;
-	self->stored_in_uchars = str->stored_in_uchars;
-	self->valid_encoding = str->valid_encoding;
-	self->has_supplementary = str->has_supplementary;
-	self->ascii_only = str->ascii_only;
+	self->flags = str->flags;
 	if (self->length_in_bytes != 0) {
 	    GC_WB(self->data.bytes, xmalloc(self->length_in_bytes));
 	    memcpy(self->data.bytes, str->data.bytes, self->length_in_bytes);
@@ -570,7 +658,7 @@ static void str_clear(string_t *self)
 
 static void str_make_data_binary(string_t *self)
 {
-    if (!self->stored_in_uchars || NATIVE_UTF16_ENC(self->encoding)) {
+    if (!str_is_stored_in_uchars(self) || NATIVE_UTF16_ENC(self->encoding)) {
 	// nothing to do
 	return;
     }
@@ -598,7 +686,7 @@ static void str_make_data_binary(string_t *self)
 
     ucnv_close(cnv);
 
-    self->stored_in_uchars = false;
+    str_set_stored_in_uchars(self, false);
     self->capacity_in_bytes = capa;
     self->length_in_bytes = target_pos - buffer;
     GC_WB(&self->data.bytes, buffer);
@@ -630,7 +718,7 @@ static long utf16_bytesize_approximation(encoding_t *enc, int bytesize)
 
 static bool str_try_making_data_utf16(string_t *self)
 {
-    if (self->stored_in_uchars) {
+    if (str_is_stored_in_uchars(self)) {
 	return true;
     }
     else if (NON_NATIVE_UTF16_ENC(self->encoding)) {
@@ -641,7 +729,7 @@ static bool str_try_making_data_utf16(string_t *self)
 	// you can't convert binary to anything
 	return false;
     }
-    else if (!self->valid_encoding) {
+    else if (!str_is_valid_encoding(self)) {
 	return false;
     }
 
@@ -674,8 +762,8 @@ static bool str_try_making_data_utf16(string_t *self)
 
     ucnv_close(cnv);
 
-    self->stored_in_uchars = true;
-    self->valid_encoding = true;
+    str_set_stored_in_uchars(self, true);
+    str_set_valid_encoding(self, true);
     self->capacity_in_bytes = capa;
     self->length_in_bytes = UCHARS_TO_BYTES(target_pos - buffer);
     GC_WB(&self->data.uchars, buffer);
@@ -688,7 +776,7 @@ static long str_length(string_t *self, bool ucs2_mode)
     if (self->length_in_bytes == 0) {
 	return 0;
     }
-    if (self->stored_in_uchars) {
+    if (str_is_stored_in_uchars(self)) {
 	long length;
 	if (ucs2_mode) {
 	    length = BYTES_TO_UCHARS(self->length_in_bytes);
@@ -760,7 +848,7 @@ static long str_length(string_t *self, bool ucs2_mode)
 #define STACK_BUFFER_SIZE 1024
 static long str_bytesize(string_t *self)
 {
-    if (self->stored_in_uchars) {
+    if (str_is_stored_in_uchars(self)) {
 	if (UTF16_ENC(self->encoding)) {
 	    return self->length_in_bytes;
 	}
@@ -799,7 +887,7 @@ static long str_bytesize(string_t *self)
 
 static bool str_getbyte(string_t *self, long index, unsigned char *c)
 {
-    if (self->stored_in_uchars && UTF16_ENC(self->encoding)) {
+    if (str_is_stored_in_uchars(self) && NATIVE_UTF16_ENC(self->encoding)) {
 	if (index < 0) {
 	    index += self->length_in_bytes;
 	    if (index < 0) {
@@ -860,24 +948,7 @@ static void str_force_encoding(string_t *self, encoding_t *enc)
     }
     str_make_data_binary(self);
     self->encoding = enc;
-    str_update_flags(self);
     str_try_making_data_utf16(self);
-}
-
-static bool str_is_valid_encoding(string_t *self)
-{
-    return self->valid_encoding;
-}
-
-static bool str_is_ascii_only(string_t *self)
-{
-    // for MRI, a string in a non-ASCII-compatible encoding (like UTF-16)
-    // containing only ASCII characters is not "ASCII only" though for us it is internally
-    if (!self->encoding->ascii_compatible) {
-	return false;
-    }
-
-    return self->ascii_only;
 }
 
 static string_t *str_copy_part(string_t *self, long offset_in_bytes, long length_in_bytes)
@@ -885,10 +956,10 @@ static string_t *str_copy_part(string_t *self, long offset_in_bytes, long length
     string_t *str = str_alloc();
     str->encoding = self->encoding;
     str->capacity_in_bytes = str->length_in_bytes = length_in_bytes;
-    str->stored_in_uchars = self->stored_in_uchars;
+    str->flags = self->flags;
+    str_unset_facultative_flags(str);
     GC_WB(&str->data.bytes, xmalloc(length_in_bytes));
     memcpy(str->data.bytes, &self->data.bytes[offset_in_bytes], length_in_bytes);
-    str_update_flags(str);
     return str;
 }
 
@@ -923,8 +994,8 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
     if (self->length_in_bytes == 0) {
 	return NULL;
     }
-    if (self->stored_in_uchars) {
-	if (ucs2_mode) {
+    if (str_is_stored_in_uchars(self)) {
+	if (ucs2_mode || str_already_known_not_to_have_any_supplementary(self)) {
 	    string_t *str = str_get_character_fixed_width(self, index, 2);
 	    if ((str != NULL) && U16_IS_SURROGATE(str->data.uchars[0])) {
 		if (!UTF16_ENC(str->encoding)) {
@@ -1053,7 +1124,7 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
 		}
 		else {
 		    if (ucs2_mode && !U_IS_BMP(c)) {
-			if ((current_index == index) || (current_index+1 == index)) {
+			if (((current_index == index) || (current_index+1 == index)) && !NON_NATIVE_UTF16_ENC(self->encoding)) {
 			    // you can't cut a surrogate in an encoding that is not UTF-16
 			    // (it's in theory possible to store the surrogate in
 			    //  UTF-8 or UTF-32 but that would be incorrect Unicode)
@@ -1156,8 +1227,16 @@ static VALUE mr_str_is_valid_encoding(VALUE self, SEL sel)
 
 static VALUE mr_str_is_ascii_only(VALUE self, SEL sel)
 {
-    return str_is_ascii_only(STR(self)) ? Qtrue : Qfalse;
+    string_t *str = STR(self);
+    // for MRI, a string in a non-ASCII-compatible encoding (like UTF-16)
+    // containing only ASCII characters is not "ASCII only" though for us it is internally
+    if (!str->encoding->ascii_compatible) {
+	return Qfalse;
+    }
+
+    return str_is_ascii_only(str) ? Qtrue : Qfalse;
 }
+
 
 static VALUE mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
 {
@@ -1187,12 +1266,18 @@ static VALUE mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
 
 static VALUE mr_str_getchar(VALUE self, SEL sel, VALUE index)
 {
-    return (VALUE)str_get_character_at(STR(self), NUM2LONG(index), false);
+    string_t *ret = str_get_character_at(STR(self), FIX2LONG(index), false);
+    if (ret == NULL) {
+	return Qnil;
+    }
+    else {
+	return (VALUE)ret;
+    }
 }
 
 static VALUE mr_str_is_stored_in_uchars(VALUE self, SEL sel)
 {
-    return STR(self)->stored_in_uchars ? Qtrue : Qfalse;
+    return str_is_stored_in_uchars(STR(self));
 }
 
 void Init_MRString(void)
