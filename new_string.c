@@ -22,6 +22,7 @@
 
 // TODO:
 // - use rb_usascii_str_new_cstr instead of rb_str_new2
+// - update flags in str_length?
 
 VALUE rb_cMREncoding;
 
@@ -359,6 +360,16 @@ static void str_unset_facultative_flags(string_t *self)
 
 static void str_update_flags(string_t *self);
 
+static bool str_already_known_to_have_a_valid_encoding(string_t *self)
+{
+    return (self->flags & (STRING_VALID_ENCODING_SET | STRING_VALID_ENCODING)) == (STRING_VALID_ENCODING_SET | STRING_VALID_ENCODING);
+}
+
+static bool str_already_known_not_to_have_any_supplementary(string_t *self)
+{
+    return (self->flags & (STRING_HAS_SUPPLEMENTARY_SET | STRING_HAS_SUPPLEMENTARY)) == STRING_HAS_SUPPLEMENTARY_SET;
+}
+
 static bool str_is_valid_encoding(string_t *self)
 {
     if (!(self->flags & STRING_VALID_ENCODING_SET)) {
@@ -395,11 +406,6 @@ static void str_set_stored_in_uchars(string_t *self, bool status)
     else {
 	self->flags = self->flags & ~STRING_STORED_IN_UCHARS;
     }
-}
-
-static bool str_already_known_not_to_have_any_supplementary(string_t *self)
-{
-    return (self->flags & (STRING_HAS_SUPPLEMENTARY_SET | STRING_HAS_SUPPLEMENTARY)) == STRING_HAS_SUPPLEMENTARY_SET;
 }
 
 static void str_set_has_supplementary(string_t *self, bool status)
@@ -729,7 +735,7 @@ static bool str_try_making_data_utf16(string_t *self)
 	// you can't convert binary to anything
 	return false;
     }
-    else if (!str_is_valid_encoding(self)) {
+    else if (!str_already_known_to_have_a_valid_encoding(self)) {
 	return false;
     }
 
@@ -753,9 +759,8 @@ static bool str_try_making_data_utf16(string_t *self)
 	    target_pos = buffer + index;
 	}
 	else {
-	    // we should not have any conversion error
-	    // because the encoding is valid
-	    assert(U_SUCCESS(err));
+	    // we can determine the validity of the encoding
+	    str_set_valid_encoding(self, U_SUCCESS(err));
 	    break;
 	}
     }
@@ -763,7 +768,6 @@ static bool str_try_making_data_utf16(string_t *self)
     ucnv_close(cnv);
 
     str_set_stored_in_uchars(self, true);
-    str_set_valid_encoding(self, true);
     self->capacity_in_bytes = capa;
     self->length_in_bytes = UCHARS_TO_BYTES(target_pos - buffer);
     GC_WB(&self->data.uchars, buffer);
@@ -948,6 +952,9 @@ static void str_force_encoding(string_t *self, encoding_t *enc)
     }
     str_make_data_binary(self);
     self->encoding = enc;
+    if (NATIVE_UTF16_ENC(enc)) {
+	str_set_stored_in_uchars(self, true);
+    }
     str_try_making_data_utf16(self);
 }
 
@@ -994,7 +1001,8 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
     if (self->length_in_bytes == 0) {
 	return NULL;
     }
-    if (str_is_stored_in_uchars(self)) {
+    if (str_is_stored_in_uchars(self)
+	    || (NON_NATIVE_UTF16_ENC(self->encoding) && (ucs2_mode || str_already_known_not_to_have_any_supplementary(self)))) {
 	if (ucs2_mode || str_already_known_not_to_have_any_supplementary(self)) {
 	    string_t *str = str_get_character_fixed_width(self, index, 2);
 	    if ((str != NULL) && U16_IS_SURROGATE(str->data.uchars[0])) {
@@ -1124,7 +1132,7 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
 		}
 		else {
 		    if (ucs2_mode && !U_IS_BMP(c)) {
-			if (((current_index == index) || (current_index+1 == index)) && !NON_NATIVE_UTF16_ENC(self->encoding)) {
+			if (((current_index == index) || (current_index+1 == index))) {
 			    // you can't cut a surrogate in an encoding that is not UTF-16
 			    // (it's in theory possible to store the surrogate in
 			    //  UTF-8 or UTF-32 but that would be incorrect Unicode)
