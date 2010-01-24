@@ -1037,15 +1037,15 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
 		// count the characters from the end
 		offset = uchars_count;
 		while ((offset > 0) && (index < 0)) {
+		    --offset;
 		    // if the next character is a paired surrogate
-		    if (U16_IS_TRAIL(uchars[offset-1]) && (offset > 1) && U16_IS_LEAD(uchars[offset-2])) {
-			offset -= 2;
-		    }
-		    else {
+		    // we need to got to the start of the whole surrogate
+		    if (U16_IS_TRAIL(uchars[offset]) && (offset > 0) && U16_IS_LEAD(uchars[offset-1])) {
 			--offset;
 		    }
 		    ++index;
 		}
+		// ended before the index got to 0
 		if (index != 0) {
 		    return NULL;
 		}
