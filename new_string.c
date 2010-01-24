@@ -1039,7 +1039,7 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
 		while ((offset > 0) && (index < 0)) {
 		    --offset;
 		    // if the next character is a paired surrogate
-		    // we need to got to the start of the whole surrogate
+		    // we need to go to the start of the whole surrogate
 		    if (U16_IS_TRAIL(uchars[offset]) && (offset > 0) && U16_IS_LEAD(uchars[offset-1])) {
 			--offset;
 		    }

@@ -11,6 +11,22 @@ end
 
 UNICODE_ENCODINGS = [:UTF_8, :UTF_16BE, :UTF_16LE, :UTF_32BE, :UTF_32LE]
 
+def getchar(str, i)
+  if MACRUBY
+    str.getchar(i)
+  else
+    str[i]
+  end
+end
+
+def chars_count(str)
+  if MACRUBY
+    str.chars_count
+  else
+    str.length
+  end
+end
+
 def read_data(name, enc_name)
   enc_for_name = enc_name.to_s.gsub(/_/, '').downcase
   file_name = File.join(File.dirname(__FILE__), "test_data/#{name}-#{enc_for_name}.txt")
@@ -131,15 +147,10 @@ UNICODE_ENCODINGS.each do |enc|
         assert_exception_raised(IndexError) { data[i] }
       end
     end
-    assert_equal 1, data.chars_count
-    assert_equal 4, data.getchar(0).bytesize
-    assert_equal nil, data.getchar(1), __LINE__
-  else
-    assert_equal 1, data.length
-    assert_equal 4, data[0].bytesize
-    assert_equal nil, data[1]
   end
-
+  assert_equal 1, chars_count(data)
+  assert_equal 4, getchar(data, 0).bytesize
+  assert_equal nil, getchar(data, 1)
   assert_equal 4, data.bytesize
 end
 
@@ -170,10 +181,8 @@ SURROGATE_WITH_INVALID_BYTES = [0x00, 0x02, 0x00, 0x0B, 0xFF, 0xFF, 0xFF, 0xFF]
     assert_exception_raised(IndexError) { data[0] }
     assert_exception_raised(IndexError) { data[1] }
     assert_no_exception_raised(__LINE__) { data[2] }
-    assert_equal 2, data.chars_count, __LINE__
-  else
-    assert_equal 2, data.length
   end
+  assert_equal 2, chars_count(data)
 end
 
 UNICODE_ENCODINGS.each do |enc|
@@ -220,7 +229,6 @@ end
   assert_equal false, data.valid_encoding?
   #assert_equal 1, (data[1]+data[0]).length # for when we support +
 
-  # 1.9 does strange things with UTF-16 so we can't use it to test
   if MACRUBY
     assert_equal 4, data.length, __LINE__
     assert_equal 2, data[0].bytesize, __LINE__
@@ -233,17 +241,17 @@ end
     assert_equal 2, data[-3].bytesize, __LINE__
     assert_equal 2, data[-2].bytesize, __LINE__
     assert_equal 2, data[-1].bytesize, __LINE__
-
-    assert_equal 3, data.chars_count, __LINE__
-    assert_equal 2, data.getchar(0).bytesize, __LINE__
-    assert_equal 2, data.getchar(1).bytesize, __LINE__
-    assert_equal 4, data.getchar(2).bytesize, __LINE__
-    assert_equal nil, data.getchar(3), __LINE__
-    assert_equal nil, data.getchar(-4), __LINE__
-    assert_equal 2, data.getchar(-3).bytesize, __LINE__
-    assert_equal 2, data.getchar(-2).bytesize, __LINE__
-    assert_equal 4, data.getchar(-1).bytesize, __LINE__
   end
+
+  assert_equal 3, chars_count(data)
+  assert_equal 2, getchar(data, 0).bytesize
+  assert_equal 2, getchar(data, 1).bytesize
+  assert_equal 4, getchar(data, 2).bytesize
+  assert_equal nil, getchar(data, 3)
+  assert_equal nil, getchar(data, -4)
+  assert_equal 2, getchar(data, -3).bytesize
+  assert_equal 2, getchar(data, -2).bytesize
+  assert_equal 4, getchar(data, -1).bytesize
 end
 
 if $tests_failed_count == 0
