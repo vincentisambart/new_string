@@ -214,6 +214,38 @@ UNICODE_ENCODINGS.each do |enc|
   end
 end
 
+[:UTF_16LE, :UTF_16BE].each do |enc|
+  data = read_data('inverted_surrogate_plus_surrogate', enc)
+  assert_equal 8, data.bytesize
+  assert_equal false, data.valid_encoding?
+  #assert_equal 1, (data[1]+data[0]).length # for when we support +
+
+  # 1.9 does strange things with UTF-16 so we can't use it to test
+  if MACRUBY
+    assert_equal 4, data.length, __LINE__
+    assert_equal 2, data[0].bytesize, __LINE__
+    assert_equal 2, data[1].bytesize, __LINE__
+    assert_equal 2, data[2].bytesize, __LINE__
+    assert_equal 2, data[3].bytesize, __LINE__
+    assert_equal nil, data[4], __LINE__
+    assert_equal nil, data[-5], __LINE__
+    assert_equal 2, data[-4].bytesize, __LINE__
+    assert_equal 2, data[-3].bytesize, __LINE__
+    assert_equal 2, data[-2].bytesize, __LINE__
+    assert_equal 2, data[-1].bytesize, __LINE__
+
+    assert_equal 3, data.chars_count, __LINE__
+    assert_equal 2, data.getchar(0).bytesize, __LINE__
+    assert_equal 2, data.getchar(1).bytesize, __LINE__
+    assert_equal 4, data.getchar(2).bytesize, __LINE__
+    assert_equal nil, data.getchar(3), __LINE__
+    assert_equal nil, data.getchar(-4), __LINE__
+    assert_equal 2, data.getchar(-3).bytesize, __LINE__
+    assert_equal 2, data.getchar(-2).bytesize, __LINE__
+    assert_equal 4, data.getchar(-1).bytesize, __LINE__
+  end
+end
+
 if $tests_failed_count == 0
   puts "everything's fine"
 else

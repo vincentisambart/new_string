@@ -960,6 +960,7 @@ static void str_force_encoding(string_t *self, encoding_t *enc)
 	str_set_stored_in_uchars(self, false);
     }
     self->encoding = enc;
+    str_unset_facultative_flags(self);
     if (NATIVE_UTF16_ENC(self->encoding)) {
 	str_set_stored_in_uchars(self, true);
     }
@@ -1036,10 +1037,8 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
 		// count the characters from the end
 		offset = uchars_count;
 		while ((offset > 0) && (index < 0)) {
-		    // FIXME: we are not sure the UTF-16 is well formed here
-		    // we suppose here that the UTF-16 is well formed,
-		    // so a trail surrogate is always after a lead surrogate
-		    if (U16_IS_TRAIL(uchars[offset-1])) {
+		    // if the next character is a paired surrogate
+		    if (U16_IS_TRAIL(uchars[offset-1]) && (offset > 1) && U16_IS_LEAD(uchars[offset-2])) {
 			offset -= 2;
 		    }
 		    else {
@@ -1050,6 +1049,7 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
 		if (index != 0) {
 		    return NULL;
 		}
+		assert(offset >= 0);
 	    }
 	    else {
 		// count the characters from the start
@@ -1059,12 +1059,9 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
 		    return NULL;
 		}
 	    }
-	    // UTF-16 strings are supposed to be always valid
-	    // so the assert should never be triggered
-	    assert(!U16_IS_TRAIL(uchars[offset]));
 
 	    long length_in_bytes;
-	    if (U16_IS_LEAD(uchars[offset])) {
+	    if (U16_IS_LEAD(uchars[offset]) && (offset < uchars_count - 1) && (U16_IS_TRAIL(uchars[offset+1]))) {
 		// if it's a lead surrogate we must also copy the trail surrogate
 		length_in_bytes = UCHARS_TO_BYTES(2);
 	    }
