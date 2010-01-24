@@ -22,7 +22,6 @@
 
 // TODO:
 // - use rb_usascii_str_new_cstr instead of rb_str_new2
-// - update flags in str_length?
 
 VALUE rb_cMREncoding;
 
@@ -820,10 +819,10 @@ static long str_length(string_t *self, bool ucs2_mode)
 	    const char *pos = self->data.bytes;
 	    const char *end = pos + self->length_in_bytes;
 	    long len = 0;
+	    bool valid_encoding = true;
 	    for (;;) {
 		const char *character_start_pos = pos;
 		// iterate through the string one Unicode code point at a time
-		// (we dont care what the character is or if it's valid or not)
 		UErrorCode err = U_ZERO_ERROR;
 		UChar32 c = ucnv_getNextUChar(cnv, &pos, end, &err);
 		if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
@@ -831,9 +830,9 @@ static long str_length(string_t *self, bool ucs2_mode)
 		    break;
 		}
 		else if (U_FAILURE(err)) {
+		    valid_encoding = false;
 		    long min_char_size = self->encoding->min_char_size;
 		    long converted_width = pos - character_start_pos;
-		    // division of converted_width by min_char_size rounded up
 		    len += div_round_up(converted_width, min_char_size);
 		}
 		else {
@@ -847,6 +846,9 @@ static long str_length(string_t *self, bool ucs2_mode)
 	    }
 
 	    ucnv_close(cnv);
+
+	    str_set_valid_encoding(self, valid_encoding);
+
 	    return len;
 	}
     }
@@ -1034,7 +1036,7 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
 		// count the characters from the end
 		offset = uchars_count;
 		while ((offset > 0) && (index < 0)) {
-		    // FIXME: we are not sure the UTF-16 is well formed without checking the valid_encoding flag
+		    // FIXME: we are not sure the UTF-16 is well formed here
 		    // we suppose here that the UTF-16 is well formed,
 		    // so a trail surrogate is always after a lead surrogate
 		    if (U16_IS_TRAIL(uchars[offset-1])) {
