@@ -1,3 +1,4 @@
+# encoding: UTF-8
 MACRUBY = defined?(MACRUBY_VERSION)
 
 if MACRUBY
@@ -24,6 +25,14 @@ def chars_count(str)
     str.chars_count
   else
     str.length
+  end
+end
+
+def utf16le(str)
+  if MACRUBY
+    str
+  else
+    str.encode(Encoding::UTF_16LE)
   end
 end
 
@@ -58,6 +67,8 @@ $tests_done_count = 0
 $tests_failed_count = 0
 def assert_equal(wanted, got, line_no = called_line)
   $tests_done_count += 1
+  wanted = S.new(wanted) if MACRUBY and wanted.instance_of?(NSMutableString)
+  got = S.new(got) if MACRUBY and got.instance_of?(NSMutableString)
   if wanted != got
     $tests_failed_count += 1
     puts "test failed: #{wanted.inspect} != #{got.inspect} at line #{line_no} (encoding: #{$current_encoding.name})"
@@ -66,6 +77,8 @@ end
 
 def assert_not_equal(not_wanted, got, line_no = called_line)
   $tests_done_count += 1
+  wanted = S.new(wanted) if MACRUBY and wanted.instance_of?(NSMutableString)
+  got = S.new(got) if MACRUBY and got.instance_of?(NSMutableString)
   if not_wanted == got
     $tests_failed_count += 1
     puts "test failed: #{not_wanted.inspect} == #{got.inspect} at line #{line_no} (encoding: #{$current_encoding.name})"
@@ -96,6 +109,12 @@ end
 
 UNICODE_ENCODINGS.each do |enc|
   data = read_data('ohayougozaimasu', enc)
+
+  if enc == :UTF_16LE
+    assert_equal utf16le('お'), data[0]
+  else
+    assert_not_equal utf16le('お'), data[0]
+  end
 
   assert_equal 9, data.length
   assert_equal 9, data.chars_count if MACRUBY

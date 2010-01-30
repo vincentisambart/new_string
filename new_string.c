@@ -80,7 +80,8 @@ static encoding_t *encodings[ENCODINGS_COUNT];
 #define UTF32_ENC(enc) (NATIVE_UTF32_ENC(enc) || NON_NATIVE_UTF32_ENC(enc))
 #define BINARY_ENC(enc) ((enc) == encodings[ENCODING_BINARY])
 
-static VALUE mr_enc_s_list(VALUE klass, SEL sel)
+static VALUE
+mr_enc_s_list(VALUE klass, SEL sel)
 {
     VALUE ary = rb_ary_new2(ENCODINGS_COUNT);
     for (unsigned int i = 0; i < ENCODINGS_COUNT; ++i) {
@@ -89,7 +90,8 @@ static VALUE mr_enc_s_list(VALUE klass, SEL sel)
     return ary;
 }
 
-static VALUE mr_enc_s_name_list(VALUE klass, SEL sel)
+static VALUE
+mr_enc_s_name_list(VALUE klass, SEL sel)
 {
     VALUE ary = rb_ary_new();
     for (unsigned int i = 0; i < ENCODINGS_COUNT; ++i) {
@@ -103,7 +105,8 @@ static VALUE mr_enc_s_name_list(VALUE klass, SEL sel)
     return ary;
 }
 
-static VALUE mr_enc_s_aliases(VALUE klass, SEL sel)
+static VALUE
+mr_enc_s_aliases(VALUE klass, SEL sel)
 {
     VALUE hash = rb_hash_new();
     for (unsigned int i = 0; i < ENCODINGS_COUNT; ++i) {
@@ -117,27 +120,32 @@ static VALUE mr_enc_s_aliases(VALUE klass, SEL sel)
     return hash;
 }
 
-static VALUE mr_enc_s_default_internal(VALUE klass, SEL sel)
+static VALUE
+mr_enc_s_default_internal(VALUE klass, SEL sel)
 {
     return (VALUE)default_internal;
 }
 
-static VALUE mr_enc_s_default_external(VALUE klass, SEL sel)
+static VALUE
+mr_enc_s_default_external(VALUE klass, SEL sel)
 {
     return (VALUE)default_external;
 }
 
-static VALUE mr_enc_name(VALUE self, SEL sel)
+static VALUE
+mr_enc_name(VALUE self, SEL sel)
 {
     return rb_str_new2(ENC(self)->public_name);
 }
 
-static VALUE mr_enc_inspect(VALUE self, SEL sel)
+static VALUE
+mr_enc_inspect(VALUE self, SEL sel)
 {
     return rb_sprintf("#<%s:%s>", rb_obj_classname(self), ENC(self)->public_name);
 }
 
-static VALUE mr_enc_names(VALUE self, SEL sel)
+static VALUE
+mr_enc_names(VALUE self, SEL sel)
 {
     encoding_t *encoding = ENC(self);
 
@@ -149,17 +157,20 @@ static VALUE mr_enc_names(VALUE self, SEL sel)
     return ary;
 }
 
-static VALUE mr_enc_ascii_compatible_p(VALUE self, SEL sel)
+static VALUE
+mr_enc_ascii_compatible_p(VALUE self, SEL sel)
 {
     return ENC(self)->ascii_compatible ? Qtrue : Qfalse;
 }
 
-static VALUE mr_enc_dummy_p(VALUE self, SEL sel)
+static VALUE
+mr_enc_dummy_p(VALUE self, SEL sel)
 {
     return Qfalse;
 }
 
-static void define_encoding_constant(const char *name, encoding_t *enc)
+static void
+define_encoding_constant(const char *name, encoding_t *enc)
 {
     char c = name[0];
     if ((c >= '0') && (c <= '9')) {
@@ -183,7 +194,8 @@ static void define_encoding_constant(const char *name, encoding_t *enc)
     free(name_copy);
 }
 
-static void add_encoding(
+static void
+add_encoding(
 	unsigned int encoding_index, // index of the encoding in the encodings array
 	const char *public_name, // public name for the encoding
 	unsigned char min_char_size,
@@ -252,7 +264,8 @@ static void add_encoding(
     }
 }
 
-static void create_encodings(void)
+static void
+create_encodings(void)
 {
     add_encoding(ENCODING_BINARY,    "ASCII-8BIT",  1, true,  true,  "BINARY", NULL);
     add_encoding(ENCODING_ASCII,     "US-ASCII",    1, true,  true,  "ASCII", "ANSI_X3.4-1968", "646", NULL);
@@ -271,7 +284,8 @@ static void create_encodings(void)
     default_internal = encodings[ENCODING_UTF16_NATIVE];
 }
 
-void Init_MREncoding(void)
+void
+Init_MREncoding(void)
 {
     rb_cMREncoding = rb_define_class("MREncoding", rb_cObject);
     rb_undef_alloc_func(rb_cMREncoding);
@@ -334,7 +348,8 @@ typedef struct {
 
 #define ODD_NUMBER(x) ((x) & 0x1)
 
-static long div_round_up(long a, long b)
+static long
+div_round_up(long a, long b)
 {
     return ((a) + (b - 1)) / b;
 }
@@ -354,24 +369,29 @@ static long div_round_up(long a, long b)
 	); \
     ucnv_reset(cnv);
 
-static void str_update_flags(string_t *self);
+static void
+str_update_flags(string_t *self);
 
-static void str_unset_facultative_flags(string_t *self)
+static void
+str_unset_facultative_flags(string_t *self)
 {
     self->flags &= ~STRING_HAS_SUPPLEMENTARY_SET & ~STRING_ASCII_ONLY_SET & ~STRING_VALID_ENCODING_SET;
 }
 
-static bool str_already_known_to_have_an_invalid_encoding(string_t *self)
+static bool
+str_already_known_to_have_an_invalid_encoding(string_t *self)
 {
     return (self->flags & (STRING_VALID_ENCODING_SET | STRING_VALID_ENCODING)) == STRING_VALID_ENCODING_SET;
 }
 
-static bool str_already_known_not_to_have_any_supplementary(string_t *self)
+static bool
+str_already_known_not_to_have_any_supplementary(string_t *self)
 {
     return (self->flags & (STRING_HAS_SUPPLEMENTARY_SET | STRING_HAS_SUPPLEMENTARY)) == STRING_HAS_SUPPLEMENTARY_SET;
 }
 
-static bool str_check_flag_and_update_if_needed(string_t *self, str_flag_t flag_set, str_flag_t flag)
+static bool
+str_check_flag_and_update_if_needed(string_t *self, str_flag_t flag_set, str_flag_t flag)
 {
     if (!(self->flags & flag_set)) {
 	str_update_flags(self);
@@ -380,27 +400,32 @@ static bool str_check_flag_and_update_if_needed(string_t *self, str_flag_t flag_
     return self->flags & flag;
 }
 
-static bool str_is_valid_encoding(string_t *self)
+static bool
+str_is_valid_encoding(string_t *self)
 {
     return str_check_flag_and_update_if_needed(self, STRING_VALID_ENCODING_SET, STRING_VALID_ENCODING);
 }
 
-static bool str_is_ascii_only(string_t *self)
+static bool
+str_is_ascii_only(string_t *self)
 {
     return str_check_flag_and_update_if_needed(self, STRING_ASCII_ONLY_SET, STRING_ASCII_ONLY);
 }
 
-static bool str_is_stored_in_uchars(string_t *self)
+static bool
+str_is_stored_in_uchars(string_t *self)
 {
     return self->flags & STRING_STORED_IN_UCHARS;
 }
 
-static void str_negate_stored_in_uchars(string_t *self)
+static void
+str_negate_stored_in_uchars(string_t *self)
 {
     self->flags ^= STRING_STORED_IN_UCHARS;
 }
 
-static void str_set_stored_in_uchars(string_t *self, bool status)
+static void
+str_set_stored_in_uchars(string_t *self, bool status)
 {
     if (status) {
 	self->flags |= STRING_STORED_IN_UCHARS;
@@ -410,7 +435,8 @@ static void str_set_stored_in_uchars(string_t *self, bool status)
     }
 }
 
-static void str_set_facultative_flag(string_t *self, bool status, str_flag_t flag_set, str_flag_t flag)
+static void
+str_set_facultative_flag(string_t *self, bool status, str_flag_t flag_set, str_flag_t flag)
 {
     if (status) {
 	self->flags = self->flags | flag_set | flag;
@@ -420,22 +446,26 @@ static void str_set_facultative_flag(string_t *self, bool status, str_flag_t fla
     }
 }
 
-static void str_set_has_supplementary(string_t *self, bool status)
+static void
+str_set_has_supplementary(string_t *self, bool status)
 {
     str_set_facultative_flag(self, status, STRING_HAS_SUPPLEMENTARY_SET, STRING_HAS_SUPPLEMENTARY);
 }
 
-static void str_set_ascii_only(string_t *self, bool status)
+static void
+str_set_ascii_only(string_t *self, bool status)
 {
     str_set_facultative_flag(self, status, STRING_ASCII_ONLY_SET, STRING_ASCII_ONLY);
 }
 
-static void str_set_valid_encoding(string_t *self, bool status)
+static void
+str_set_valid_encoding(string_t *self, bool status)
 {
     str_set_facultative_flag(self, status, STRING_VALID_ENCODING_SET, STRING_VALID_ENCODING);
 }
 
-static void str_update_flags_utf16(string_t *self)
+static void
+str_update_flags_utf16(string_t *self)
 {
     assert(str_is_stored_in_uchars(self) || NON_NATIVE_UTF16_ENC(self->encoding));
 
@@ -514,7 +544,8 @@ static void str_update_flags_utf16(string_t *self)
     }
 }
 
-static void str_update_flags(string_t *self)
+static void
+str_update_flags(string_t *self)
 {
     if ((self->length_in_bytes == 0) || BINARY_ENC(self->encoding)) {
 	str_set_valid_encoding(self, false);
@@ -566,7 +597,8 @@ static void str_update_flags(string_t *self)
     }
 }
 
-static void str_invert_byte_order(string_t *self)
+static void
+str_invert_byte_order(string_t *self)
 {
     assert(NON_NATIVE_UTF16_ENC(self->encoding));
 
@@ -586,7 +618,8 @@ static void str_invert_byte_order(string_t *self)
 }
 
 
-static string_t *str_alloc(void)
+static string_t *
+str_alloc(void)
 {
     NEWOBJ(str, string_t);
     str->basic.flags = 0;
@@ -599,7 +632,8 @@ static string_t *str_alloc(void)
     return str;
 }
 
-static VALUE mr_str_s_alloc(VALUE klass)
+static VALUE
+mr_str_s_alloc(VALUE klass)
 {
     return (VALUE)str_alloc();
 }
@@ -612,7 +646,8 @@ extern VALUE rb_cNSMutableString;
 extern VALUE rb_cSymbol;
 extern VALUE rb_cByteString;
 
-static void str_replace(string_t *self, VALUE arg)
+static void
+str_replace(string_t *self, VALUE arg)
 {
     VALUE klass = OBJC_CLASS(arg);
     if (klass == rb_cByteString) {
@@ -654,12 +689,14 @@ static void str_replace(string_t *self, VALUE arg)
     }
 }
 
-static void str_clear(string_t *self)
+static void
+str_clear(string_t *self)
 {
     self->length_in_bytes = 0;
 }
 
-static void str_make_data_binary(string_t *self)
+static void
+str_make_data_binary(string_t *self)
 {
     if (!str_is_stored_in_uchars(self) || NATIVE_UTF16_ENC(self->encoding)) {
 	// nothing to do
@@ -695,7 +732,8 @@ static void str_make_data_binary(string_t *self)
     GC_WB(&self->data.bytes, buffer);
 }
 
-static long utf16_bytesize_approximation(encoding_t *enc, int bytesize)
+static long
+utf16_bytesize_approximation(encoding_t *enc, int bytesize)
 {
     long approximation;
     if (UTF16_ENC(enc)) {
@@ -719,7 +757,8 @@ static long utf16_bytesize_approximation(encoding_t *enc, int bytesize)
     return approximation;
 }
 
-static bool str_try_making_data_uchars(string_t *self)
+static bool
+str_try_making_data_uchars(string_t *self)
 {
     if (str_is_stored_in_uchars(self)) {
 	return true;
@@ -777,7 +816,8 @@ static bool str_try_making_data_uchars(string_t *self)
     }
 }
 
-static long str_length(string_t *self, bool ucs2_mode)
+static long
+str_length(string_t *self, bool ucs2_mode)
 {
     if (self->length_in_bytes == 0) {
 	return 0;
@@ -855,7 +895,8 @@ static long str_length(string_t *self, bool ucs2_mode)
 }
 
 #define STACK_BUFFER_SIZE 1024
-static long str_bytesize(string_t *self)
+static long
+str_bytesize(string_t *self)
 {
     if (str_is_stored_in_uchars(self)) {
 	if (UTF16_ENC(self->encoding)) {
@@ -894,7 +935,8 @@ static long str_bytesize(string_t *self)
     }
 }
 
-static bool str_getbyte(string_t *self, long index, unsigned char *c)
+static bool
+str_getbyte(string_t *self, long index, unsigned char *c)
 {
     if (str_is_stored_in_uchars(self) && NATIVE_UTF16_ENC(self->encoding)) {
 	if (index < 0) {
@@ -938,7 +980,8 @@ static bool str_getbyte(string_t *self, long index, unsigned char *c)
     return true;
 }
 
-static void str_setbyte(string_t *self, long index, unsigned char value)
+static void
+str_setbyte(string_t *self, long index, unsigned char value)
 {
     str_make_data_binary(self);
     if ((index < -self->length_in_bytes) || (index >= self->length_in_bytes)) {
@@ -950,7 +993,8 @@ static void str_setbyte(string_t *self, long index, unsigned char value)
     self->data.bytes[index] = value;
 }
 
-static void str_force_encoding(string_t *self, encoding_t *enc)
+static void
+str_force_encoding(string_t *self, encoding_t *enc)
 {
     if (enc == self->encoding) {
 	return;
@@ -967,7 +1011,8 @@ static void str_force_encoding(string_t *self, encoding_t *enc)
     str_try_making_data_uchars(self);
 }
 
-static string_t *str_copy_part(string_t *self, long offset_in_bytes, long length_in_bytes)
+static string_t *
+str_copy_part(string_t *self, long offset_in_bytes, long length_in_bytes)
 {
     string_t *str = str_alloc();
     str->encoding = self->encoding;
@@ -979,12 +1024,14 @@ static string_t *str_copy_part(string_t *self, long offset_in_bytes, long length
     return str;
 }
 
-NORETURN(static void str_cannot_cut_surrogate(void))
+NORETURN(static void
+str_cannot_cut_surrogate(void))
 {
     rb_raise(rb_eIndexError, "You can't cut a surrogate in two in an encoding that is not UTF-16");
 }
 
-static string_t *str_get_character_fixed_width(string_t *self, long index, long character_width)
+static string_t *
+str_get_character_fixed_width(string_t *self, long index, long character_width)
 {
     long len = div_round_up(self->length_in_bytes, character_width);
     if (index < 0) {
@@ -1005,7 +1052,8 @@ static string_t *str_get_character_fixed_width(string_t *self, long index, long 
     return str_copy_part(self, offset_in_bytes, character_width);
 }
 
-static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode)
+static string_t *
+str_get_character_at(string_t *self, long index, bool ucs2_mode)
 {
     if (self->length_in_bytes == 0) {
 	return NULL;
@@ -1158,10 +1206,60 @@ static string_t *str_get_character_at(string_t *self, long index, bool ucs2_mode
     }
 }
 
+static bool
+str_equal_to_str(string_t *self, string_t *str)
+{
+    if (self == str) {
+	return true;
+    }
+
+    if (self->length_in_bytes == 0) {
+	if (str->length_in_bytes == 0) {
+	    // both strings are empty
+	    return true;
+	}
+	else {
+	    // only self is empty
+	    return false;
+	}
+    }
+    else if (str->length_in_bytes == 0) {
+	// only str is empty
+	return false;
+    }
+
+    if (self->encoding == str->encoding) {
+	if (str_is_stored_in_uchars(self) == str_is_stored_in_uchars(str)) {
+	    if (self->length_in_bytes != str->length_in_bytes) {
+		return false;
+	    }
+	    else {
+		return (memcmp(self->data.bytes, str->data.bytes, self->length_in_bytes) == 0);
+	    }
+	}
+	else { // one is in uchars and the other is in binary
+	    if (!str_try_making_data_uchars(self) || !str_try_making_data_uchars(str)) {
+		// one is in uchars but the other one can't be converted in uchars
+		return false;
+	    }
+	    if (self->length_in_bytes != str->length_in_bytes) {
+		return false;
+	    }
+	    else {
+		return (memcmp(self->data.bytes, str->data.bytes, self->length_in_bytes) == 0);
+	    }
+	}
+    }
+    else { // different encodings
+	abort(); // TODO
+    }
+}
+
 //----------------------------------------------
 // Functions called by MacRuby
 
-static VALUE mr_str_initialize(VALUE self, SEL sel, int argc, VALUE *argv)
+static VALUE
+mr_str_initialize(VALUE self, SEL sel, int argc, VALUE *argv)
 {
     VALUE arg;
     if (argc > 0) {
@@ -1171,39 +1269,46 @@ static VALUE mr_str_initialize(VALUE self, SEL sel, int argc, VALUE *argv)
     return self;
 }
 
-static VALUE mr_str_replace(VALUE self, SEL sel, VALUE arg)
+static VALUE
+mr_str_replace(VALUE self, SEL sel, VALUE arg)
 {
     str_replace(STR(self), arg);
     return self;
 }
 
-static VALUE mr_str_clear(VALUE self, SEL sel)
+static VALUE
+mr_str_clear(VALUE self, SEL sel)
 {
     str_clear(STR(self));
     return self;
 }
 
-static VALUE mr_str_chars_count(VALUE self, SEL sel)
+static VALUE
+mr_str_chars_count(VALUE self, SEL sel)
 {
     return INT2NUM(str_length(STR(self), false));
 }
 
-static VALUE mr_str_length(VALUE self, SEL sel)
+static VALUE
+mr_str_length(VALUE self, SEL sel)
 {
     return INT2NUM(str_length(STR(self), true));
 }
 
-static VALUE mr_str_bytesize(VALUE self, SEL sel)
+static VALUE
+mr_str_bytesize(VALUE self, SEL sel)
 {
     return INT2NUM(str_bytesize(STR(self)));
 }
 
-static VALUE mr_str_encoding(VALUE self, SEL sel)
+static VALUE
+mr_str_encoding(VALUE self, SEL sel)
 {
     return (VALUE)STR(self)->encoding;
 }
 
-static VALUE mr_str_getbyte(VALUE self, SEL sel, VALUE index)
+static VALUE
+mr_str_getbyte(VALUE self, SEL sel, VALUE index)
 {
     unsigned char c;
     if (str_getbyte(STR(self), NUM2LONG(index), &c)) {
@@ -1214,13 +1319,15 @@ static VALUE mr_str_getbyte(VALUE self, SEL sel, VALUE index)
     }
 }
 
-static VALUE mr_str_setbyte(VALUE self, SEL sel, VALUE index, VALUE value)
+static VALUE
+mr_str_setbyte(VALUE self, SEL sel, VALUE index, VALUE value)
 {
     str_setbyte(STR(self), NUM2LONG(index), 0xFF & (unsigned long)NUM2LONG(value));
     return value;
 }
 
-static VALUE mr_str_force_encoding(VALUE self, SEL sel, VALUE encoding)
+static VALUE
+mr_str_force_encoding(VALUE self, SEL sel, VALUE encoding)
 {
     encoding_t *enc;
     if (OBJC_CLASS(encoding) == rb_cMREncoding) {
@@ -1233,12 +1340,14 @@ static VALUE mr_str_force_encoding(VALUE self, SEL sel, VALUE encoding)
     return self;
 }
 
-static VALUE mr_str_is_valid_encoding(VALUE self, SEL sel)
+static VALUE
+mr_str_is_valid_encoding(VALUE self, SEL sel)
 {
     return str_is_valid_encoding(STR(self)) ? Qtrue : Qfalse;
 }
 
-static VALUE mr_str_is_ascii_only(VALUE self, SEL sel)
+static VALUE
+mr_str_is_ascii_only(VALUE self, SEL sel)
 {
     string_t *str = STR(self);
     // for MRI, a string in a non-ASCII-compatible encoding (like UTF-16)
@@ -1251,7 +1360,8 @@ static VALUE mr_str_is_ascii_only(VALUE self, SEL sel)
 }
 
 
-static VALUE mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
+static VALUE
+mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
 {
     if (argc == 1) {
 	VALUE index = argv[0];
@@ -1277,7 +1387,8 @@ static VALUE mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
     }
 }
 
-static VALUE mr_str_getchar(VALUE self, SEL sel, VALUE index)
+static VALUE
+mr_str_getchar(VALUE self, SEL sel, VALUE index)
 {
     string_t *ret = str_get_character_at(STR(self), FIX2LONG(index), false);
     if (ret == NULL) {
@@ -1288,12 +1399,32 @@ static VALUE mr_str_getchar(VALUE self, SEL sel, VALUE index)
     }
 }
 
-static VALUE mr_str_is_stored_in_uchars(VALUE self, SEL sel)
+static VALUE
+mr_str_equal(VALUE self, SEL sel, VALUE str)
+{
+    if (OBJC_CLASS(str) != rb_cMRString) {
+	abort(); // TODO
+    }
+    return str_equal_to_str(STR(self), STR(str)) ? Qtrue : Qfalse;
+}
+
+static VALUE
+mr_str_not_equal(VALUE self, SEL sel, VALUE str)
+{
+    if (OBJC_CLASS(str) != rb_cMRString) {
+	abort(); // TODO
+    }
+    return str_equal_to_str(STR(self), STR(str)) ? Qfalse : Qtrue;
+}
+
+static VALUE
+mr_str_is_stored_in_uchars(VALUE self, SEL sel)
 {
     return str_is_stored_in_uchars(STR(self));
 }
 
-void Init_MRString(void)
+void
+Init_MRString(void)
 {
     // encodings must be loaded before strings
     assert((default_external != NULL) && (default_internal != NULL));
@@ -1314,6 +1445,8 @@ void Init_MRString(void)
     rb_objc_define_method(rb_cMRString, "valid_encoding?", mr_str_is_valid_encoding, 0);
     rb_objc_define_method(rb_cMRString, "ascii_only?", mr_str_is_ascii_only, 0);
     rb_objc_define_method(rb_cMRString, "[]", mr_str_aref, -1);
+    rb_objc_define_method(rb_cMRString, "==", mr_str_equal, 1);
+    rb_objc_define_method(rb_cMRString, "!=", mr_str_not_equal, 1);
 
     // added for MacRuby
     rb_objc_define_method(rb_cMRString, "chars_count", mr_str_chars_count, 0);
@@ -1323,7 +1456,8 @@ void Init_MRString(void)
     rb_objc_define_method(rb_cMRString, "stored_in_uchars?", mr_str_is_stored_in_uchars, 0);
 }
 
-void Init_new_string(void)
+void
+Init_new_string(void)
 {
     Init_MREncoding();
     Init_MRString();
