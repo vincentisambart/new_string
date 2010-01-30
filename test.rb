@@ -65,37 +65,37 @@ end
 
 $tests_done_count = 0
 $tests_failed_count = 0
-def assert_equal(wanted, got, line_no = called_line)
+def assert_equal(wanted, got)
   $tests_done_count += 1
   wanted = S.new(wanted) if MACRUBY and wanted.instance_of?(NSMutableString)
   got = S.new(got) if MACRUBY and got.instance_of?(NSMutableString)
   if wanted != got
     $tests_failed_count += 1
-    puts "test failed: #{wanted.inspect} != #{got.inspect} at line #{line_no} (encoding: #{$current_encoding.name})"
+    puts "test failed: #{wanted.inspect} != #{got.inspect} at line #{called_line} (encoding: #{$current_encoding.name})"
   end
 end
 
-def assert_not_equal(not_wanted, got, line_no = called_line)
+def assert_not_equal(not_wanted, got)
   $tests_done_count += 1
   wanted = S.new(wanted) if MACRUBY and wanted.instance_of?(NSMutableString)
   got = S.new(got) if MACRUBY and got.instance_of?(NSMutableString)
   if not_wanted == got
     $tests_failed_count += 1
-    puts "test failed: #{not_wanted.inspect} == #{got.inspect} at line #{line_no} (encoding: #{$current_encoding.name})"
+    puts "test failed: #{not_wanted.inspect} == #{got.inspect} at line #{called_line} (encoding: #{$current_encoding.name})"
   end
 end
 
-def assert_no_exception_raised(line_no = called_line)
+def assert_no_exception_raised
   $tests_done_count += 1
   begin
     yield
   rescue Exception
     $tests_failed_count += 1
-    puts "test failed: exception raised at line #{line_no} (encoding: #{$current_encoding.name})"
+    puts "test failed: exception raised at line #{called_line} (encoding: #{$current_encoding.name})"
   end
 end
 
-def assert_exception_raised(exception, line_no = called_line)
+def assert_exception_raised(exception)
   $tests_done_count += 1
   begin
     yield
@@ -103,18 +103,12 @@ def assert_exception_raised(exception, line_no = called_line)
     # we got the exception we wanted
   else
     $tests_failed_count += 1
-    puts "test failed: exception #{exception.name} not raised at line #{line_no} (encoding: #{$current_encoding.name})"
+    puts "test failed: exception #{exception.name} not raised at line #{called_line} (encoding: #{$current_encoding.name})"
   end
 end
 
 UNICODE_ENCODINGS.each do |enc|
   data = read_data('ohayougozaimasu', enc)
-
-  if enc == :UTF_16LE
-    assert_equal utf16le('お'), data[0]
-  else
-    assert_not_equal utf16le('お'), data[0]
-  end
 
   assert_equal 9, data.length
   assert_equal 9, data.chars_count if MACRUBY
@@ -123,7 +117,16 @@ UNICODE_ENCODINGS.each do |enc|
     assert_equal data.encoding, c.encoding
     assert_equal 1, c.length
     assert_equal 1, c.chars_count if MACRUBY
+    assert_equal true, c.valid_encoding?
   end
+
+  #assert_equal 1, data[0, 1].length
+  #assert_equal 2, data[0, 2].length
+  #if MACRUBY
+  #  assert_equal 1, data[0, 1].chars_count
+  #  assert_equal 2, data[0, 2].chars_count
+  #end
+
   assert_equal true, data.valid_encoding?
 
   case enc
@@ -134,6 +137,14 @@ UNICODE_ENCODINGS.each do |enc|
   when :UTF_32LE, :UTF_32BE
     assert_equal 36, data.bytesize
   end
+
+  #if enc == :UTF_16LE
+  #  assert_equal utf16le('お'), data[0]
+  #  assert_equal utf16le('お'), data[0, 1]
+  #  assert_equal utf16le('おは'), data[0, 2]
+  #else
+  #  assert_not_equal utf16le('お'), data[0]
+  #end
 end
 
 SURROGATE_UTF16_BYTES = [0xD8, 0x40, 0xDC, 0x0B]
@@ -152,12 +163,12 @@ UNICODE_ENCODINGS.each do |enc|
   end
 
   if MACRUBY
-    assert_equal 2, data.length, __LINE__
+    assert_equal 2, data.length
     data.length.times do |i|
       if enc == :UTF_16LE or enc == :UTF_16BE
-        assert_no_exception_raised(__LINE__) { data[i] }
+        assert_no_exception_raised { data[i] }
         c = data[i]
-        assert_not_equal nil, c, __LINE__
+        assert_not_equal nil, c
         assert_equal 2, c.bytesize
         assert_equal SURROGATE_UTF16_BYTES[i*2], c.getbyte(enc == :UTF_16BE ? 0 : 1)
         assert_equal SURROGATE_UTF16_BYTES[i*2 + 1], c.getbyte(enc == :UTF_16BE ? 1 : 0)
@@ -199,7 +210,7 @@ SURROGATE_WITH_INVALID_BYTES = [0x00, 0x02, 0x00, 0x0B, 0xFF, 0xFF, 0xFF, 0xFF]
     assert_equal 3, data.length
     assert_exception_raised(IndexError) { data[0] }
     assert_exception_raised(IndexError) { data[1] }
-    assert_no_exception_raised(__LINE__) { data[2] }
+    assert_no_exception_raised { data[2] }
   end
   assert_equal 2, chars_count(data)
 end
@@ -249,17 +260,17 @@ end
   #assert_equal 1, (data[1]+data[0]).length # for when we support +
 
   if MACRUBY
-    assert_equal 4, data.length, __LINE__
-    assert_equal 2, data[0].bytesize, __LINE__
-    assert_equal 2, data[1].bytesize, __LINE__
-    assert_equal 2, data[2].bytesize, __LINE__
-    assert_equal 2, data[3].bytesize, __LINE__
-    assert_equal nil, data[4], __LINE__
-    assert_equal nil, data[-5], __LINE__
-    assert_equal 2, data[-4].bytesize, __LINE__
-    assert_equal 2, data[-3].bytesize, __LINE__
-    assert_equal 2, data[-2].bytesize, __LINE__
-    assert_equal 2, data[-1].bytesize, __LINE__
+    assert_equal 4, data.length
+    assert_equal 2, data[0].bytesize
+    assert_equal 2, data[1].bytesize
+    assert_equal 2, data[2].bytesize
+    assert_equal 2, data[3].bytesize
+    assert_equal nil, data[4]
+    assert_equal nil, data[-5]
+    assert_equal 2, data[-4].bytesize
+    assert_equal 2, data[-3].bytesize
+    assert_equal 2, data[-2].bytesize
+    assert_equal 2, data[-1].bytesize
   end
 
   assert_equal 3, chars_count(data)
