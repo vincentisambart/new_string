@@ -1012,7 +1012,7 @@ str_force_encoding(string_t *self, encoding_t *enc)
 }
 
 static string_t *
-str_copy_part(string_t *self, long offset_in_bytes, long length_in_bytes)
+str_make_copy_of_part(string_t *self, long offset_in_bytes, long length_in_bytes)
 {
     string_t *str = str_alloc();
     str->encoding = self->encoding;
@@ -1049,7 +1049,23 @@ str_get_character_fixed_width(string_t *self, long index, long character_width)
     if (offset_in_bytes + character_width > self->length_in_bytes) {
 	character_width = self->length_in_bytes - offset_in_bytes;
     }
-    return str_copy_part(self, offset_in_bytes, character_width);
+    return str_make_copy_of_part(self, offset_in_bytes, character_width);
+}
+
+static string_t *
+str_get_character_range(string_t *self, long start, long end)
+{
+    if (self->length_in_bytes == 0) {
+	if (start == 0) {
+	    string_t *str = str_alloc();
+	    str->encoding = self->encoding;
+	    return str;
+	}
+	else {
+	    return NULL;
+	}
+    }
+    abort(); // TODO
 }
 
 static string_t *
@@ -1058,8 +1074,7 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
     if (self->length_in_bytes == 0) {
 	return NULL;
     }
-    if (str_is_stored_in_uchars(self)
-	    || (NON_NATIVE_UTF16_ENC(self->encoding) && (ucs2_mode || str_already_known_not_to_have_any_supplementary(self)))) {
+    if (str_is_stored_in_uchars(self)) {
 	if (ucs2_mode || str_already_known_not_to_have_any_supplementary(self)) {
 	    string_t *str = str_get_character_fixed_width(self, index, 2);
 	    if ((str != NULL) && U16_IS_SURROGATE(str->data.uchars[0])) {
@@ -1117,7 +1132,7 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
 		length_in_bytes = UCHARS_TO_BYTES(1);
 	    }
 	    long offset_in_bytes = UCHARS_TO_BYTES(offset);
-	    return str_copy_part(self, offset_in_bytes, length_in_bytes);
+	    return str_make_copy_of_part(self, offset_in_bytes, length_in_bytes);
 	}
     }
     else { // data in binary
@@ -1126,6 +1141,9 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
 	}
 	else if (!ucs2_mode && UTF32_ENC(self->encoding)) { // UTF-32 only in non UCS-2 mode
 	    return str_get_character_fixed_width(self, index, 4);
+	}
+	else if (NON_NATIVE_UTF16_ENC(self->encoding) && (ucs2_mode || str_already_known_not_to_have_any_supplementary(self))) {
+	    return str_get_character_fixed_width(self, index, 2);
 	}
 	else {
 	    if (index < 0) {
@@ -1168,7 +1186,7 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
 			    length_in_bytes = min_char_size;
 			}
 			ucnv_close(cnv);
-			return str_copy_part(self, offset_in_bytes, length_in_bytes);
+			return str_make_copy_of_part(self, offset_in_bytes, length_in_bytes);
 		    }
 		    else if (current_index + diff > index) {
 			long adjusted_offset = offset_in_bytes + (index - current_index) * min_char_size;
@@ -1179,7 +1197,7 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
 			    length_in_bytes = min_char_size;
 			}
 			ucnv_close(cnv);
-			return str_copy_part(self, adjusted_offset, length_in_bytes);
+			return str_make_copy_of_part(self, adjusted_offset, length_in_bytes);
 		    }
 		    current_index += diff;
 		}
@@ -1196,7 +1214,7 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
 
 		    if (current_index == index) {
 			ucnv_close(cnv);
-			return str_copy_part(self, offset_in_bytes, converted_width);
+			return str_make_copy_of_part(self, offset_in_bytes, converted_width);
 		    }
 
 		    ++current_index;
@@ -1380,7 +1398,22 @@ mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
 	abort(); // TODO
     }
     else if (argc == 2) {
-	abort(); // TODO
+	long length = NUM2LONG(argv[1]);
+	if (length < 0) {
+	    return Qnil;
+	}
+	long start = NUM2LONG(argv[0]);
+	long end = start + length;
+	if ((start < 0) && (end >= 0)) {
+	    end = -1;
+	}
+	string_t *ret = str_get_character_range(STR(self), start, end);
+	if (ret == NULL) {
+	    return Qnil;
+	}
+	else {
+	    return (VALUE)ret;
+	}
     }
     else {
 	rb_raise(rb_eArgError, "wrong number of arguments (%d for 1)", argc);

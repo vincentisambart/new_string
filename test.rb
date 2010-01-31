@@ -107,6 +107,11 @@ def assert_exception_raised(exception)
   end
 end
 
+assert_equal ''[0], nil
+assert_equal ''[0, -1], nil
+assert_equal ''[0, 0], ''
+assert_equal ''[0, 100], ''
+
 UNICODE_ENCODINGS.each do |enc|
   data = read_data('ohayougozaimasu', enc)
 
