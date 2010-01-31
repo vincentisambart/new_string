@@ -125,12 +125,12 @@ UNICODE_ENCODINGS.each do |enc|
     assert_equal true, c.valid_encoding?
   end
 
-  #assert_equal 1, data[0, 1].length
-  #assert_equal 2, data[0, 2].length
-  #if MACRUBY
-  #  assert_equal 1, data[0, 1].chars_count
-  #  assert_equal 2, data[0, 2].chars_count
-  #end
+  assert_equal 1, data[0, 1].length
+  assert_equal 2, data[0, 2].length
+  if MACRUBY
+    assert_equal 1, data[0, 1].chars_count
+    assert_equal 2, data[0, 2].chars_count
+  end
 
   assert_equal true, data.valid_encoding?
 
@@ -143,13 +143,13 @@ UNICODE_ENCODINGS.each do |enc|
     assert_equal 36, data.bytesize
   end
 
-  #if enc == :UTF_16LE
-  #  assert_equal utf16le('お'), data[0]
-  #  assert_equal utf16le('お'), data[0, 1]
-  #  assert_equal utf16le('おは'), data[0, 2]
-  #else
-  #  assert_not_equal utf16le('お'), data[0]
-  #end
+  if enc == :UTF_16LE
+    assert_equal utf16le('お'), data[0]
+    assert_equal utf16le('お'), data[0, 1]
+    assert_equal utf16le('おは'), data[0, 2]
+  else
+    assert_not_equal utf16le('お'), data[0]
+  end
 end
 
 SURROGATE_UTF16_BYTES = [0xD8, 0x40, 0xDC, 0x0B]

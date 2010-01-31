@@ -341,6 +341,8 @@ typedef struct {
 #define STRING_VALID_ENCODING        0x002
 #define STRING_STORED_IN_UCHARS      0x001
 
+#define STRING_REQUIRED_FLAGS STRING_STORED_IN_UCHARS
+
 #define STR(x) ((string_t *)(x))
 
 #define BYTES_TO_UCHARS(len) ((len) / sizeof(UChar))
@@ -1012,13 +1014,21 @@ str_force_encoding(string_t *self, encoding_t *enc)
 }
 
 static string_t *
-str_make_copy_of_part(string_t *self, long offset_in_bytes, long length_in_bytes)
+str_new_similar_empty_string(string_t *self)
+{
+    string_t *str = str_alloc();
+    str->encoding = self->encoding;
+    str->flags = self->flags & STRING_REQUIRED_FLAGS;
+    return str;
+}
+
+static string_t *
+str_new_copy_of_part(string_t *self, long offset_in_bytes, long length_in_bytes)
 {
     string_t *str = str_alloc();
     str->encoding = self->encoding;
     str->capacity_in_bytes = str->length_in_bytes = length_in_bytes;
-    str->flags = self->flags;
-    str_unset_facultative_flags(str);
+    str->flags = self->flags & STRING_REQUIRED_FLAGS;
     GC_WB(&str->data.bytes, xmalloc(length_in_bytes));
     memcpy(str->data.bytes, &self->data.bytes[offset_in_bytes], length_in_bytes);
     return str;
@@ -1049,20 +1059,36 @@ str_get_character_fixed_width(string_t *self, long index, long character_width)
     if (offset_in_bytes + character_width > self->length_in_bytes) {
 	character_width = self->length_in_bytes - offset_in_bytes;
     }
-    return str_make_copy_of_part(self, offset_in_bytes, character_width);
+    return str_new_copy_of_part(self, offset_in_bytes, character_width);
 }
 
 static string_t *
-str_get_character_range(string_t *self, long start, long end)
+str_get_characters(string_t *self, long start, long end, bool ucs2_mode)
 {
     if (self->length_in_bytes == 0) {
 	if (start == 0) {
-	    string_t *str = str_alloc();
-	    str->encoding = self->encoding;
-	    return str;
+	    return str_new_similar_empty_string(self);
 	}
 	else {
 	    return NULL;
+	}
+    }
+    if (str_is_stored_in_uchars(self)) {
+	if (ucs2_mode || str_already_known_not_to_have_any_supplementary(self)) {
+	    long length = BYTES_TO_UCHARS(self->length_in_bytes);
+	    if (start < 0) {
+		start += length;
+		if (start < 0) {
+		    return NULL;
+		}
+	    }
+	    if (end < 0) {
+		end += length;
+	    }
+	    if (end <= start) {
+		return str_new_similar_empty_string(self);
+	    }
+	    return str_new_copy_of_part(self, UCHARS_TO_BYTES(start), UCHARS_TO_BYTES(end - start));
 	}
     }
     abort(); // TODO
@@ -1132,7 +1158,7 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
 		length_in_bytes = UCHARS_TO_BYTES(1);
 	    }
 	    long offset_in_bytes = UCHARS_TO_BYTES(offset);
-	    return str_make_copy_of_part(self, offset_in_bytes, length_in_bytes);
+	    return str_new_copy_of_part(self, offset_in_bytes, length_in_bytes);
 	}
     }
     else { // data in binary
@@ -1186,7 +1212,7 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
 			    length_in_bytes = min_char_size;
 			}
 			ucnv_close(cnv);
-			return str_make_copy_of_part(self, offset_in_bytes, length_in_bytes);
+			return str_new_copy_of_part(self, offset_in_bytes, length_in_bytes);
 		    }
 		    else if (current_index + diff > index) {
 			long adjusted_offset = offset_in_bytes + (index - current_index) * min_char_size;
@@ -1197,7 +1223,7 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
 			    length_in_bytes = min_char_size;
 			}
 			ucnv_close(cnv);
-			return str_make_copy_of_part(self, adjusted_offset, length_in_bytes);
+			return str_new_copy_of_part(self, adjusted_offset, length_in_bytes);
 		    }
 		    current_index += diff;
 		}
@@ -1214,7 +1240,7 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
 
 		    if (current_index == index) {
 			ucnv_close(cnv);
-			return str_make_copy_of_part(self, offset_in_bytes, converted_width);
+			return str_new_copy_of_part(self, offset_in_bytes, converted_width);
 		    }
 
 		    ++current_index;
@@ -1407,7 +1433,7 @@ mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
 	if ((start < 0) && (end >= 0)) {
 	    end = -1;
 	}
-	string_t *ret = str_get_character_range(STR(self), start, end);
+	string_t *ret = str_get_characters(STR(self), start, end, true);
 	if (ret == NULL) {
 	    return Qnil;
 	}
