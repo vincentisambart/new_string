@@ -107,10 +107,10 @@ def assert_exception_raised(exception)
   end
 end
 
-assert_equal ''[0], nil
-assert_equal ''[0, -1], nil
-assert_equal ''[0, 0], ''
-assert_equal ''[0, 100], ''
+assert_equal nil, ''[0]
+assert_equal nil, ''[0, -1]
+assert_equal '', ''[0, 0]
+assert_equal '', ''[0, 100]
 
 UNICODE_ENCODINGS.each do |enc|
   data = read_data('ohayougozaimasu', enc)
@@ -125,6 +125,8 @@ UNICODE_ENCODINGS.each do |enc|
     assert_equal true, c.valid_encoding?
   end
 
+  assert_equal '', data[9, 0]
+  assert_equal nil, data[10, 0]
   assert_equal 1, data[0, 1].length
   assert_equal 2, data[0, 2].length
   if MACRUBY

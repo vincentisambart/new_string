@@ -1082,6 +1082,9 @@ str_get_characters(string_t *self, long start, long end, bool ucs2_mode)
 		    return NULL;
 		}
 	    }
+	    if (start > length) {
+		return NULL;
+	    }
 	    if (end < 0) {
 		end += length;
 	    }
@@ -1089,6 +1092,9 @@ str_get_characters(string_t *self, long start, long end, bool ucs2_mode)
 		return str_new_similar_empty_string(self);
 	    }
 	    return str_new_copy_of_part(self, UCHARS_TO_BYTES(start), UCHARS_TO_BYTES(end - start));
+	}
+	else {
+	    abort(); // TODO
 	}
     }
     abort(); // TODO
