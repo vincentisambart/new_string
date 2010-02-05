@@ -419,6 +419,18 @@ str_is_ascii_only(string_t *self)
 }
 
 static bool
+str_is_ruby_ascii_only(string_t *self)
+{
+    // for MRI, a string in a non-ASCII-compatible encoding (like UTF-16)
+    // containing only ASCII characters is not "ASCII only" though for us it is internally
+    if (!self->encoding->ascii_compatible) {
+	return false;
+    }
+
+    return str_is_ascii_only(self);
+}
+
+static bool
 str_is_stored_in_uchars(string_t *self)
 {
     return self->flags & STRING_STORED_IN_UCHARS;
@@ -630,7 +642,10 @@ str_enc_compatible(string_t *str1, string_t *str2)
     if (str1->encoding == str2->encoding) {
 	return str1->encoding;
     }
-    abort();
+    if (str_is_ruby_ascii_only(str1) && str_is_ruby_ascii_only(str2)) {
+	return str1->encoding;
+    }
+    return NULL;
 }
 
 
@@ -1437,16 +1452,8 @@ mr_str_is_valid_encoding(VALUE self, SEL sel)
 static VALUE
 mr_str_is_ascii_only(VALUE self, SEL sel)
 {
-    string_t *str = STR(self);
-    // for MRI, a string in a non-ASCII-compatible encoding (like UTF-16)
-    // containing only ASCII characters is not "ASCII only" though for us it is internally
-    if (!str->encoding->ascii_compatible) {
-	return Qfalse;
-    }
-
-    return str_is_ascii_only(str) ? Qtrue : Qfalse;
+    return str_is_ruby_ascii_only(STR(self)) ? Qtrue : Qfalse;
 }
-
 
 static VALUE
 mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
