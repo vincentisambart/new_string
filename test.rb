@@ -296,6 +296,8 @@ bonjour_utf8 = read_data('bonjour', :ASCII).force_encoding(E::UTF_8)
 bonjour_utf16le = read_data('bonjour', :UTF_16LE)
 ohayou_utf8 = read_data('ohayougozaimasu', :UTF_8)
 ohayou_utf16le = read_data('ohayougozaimasu', :UTF_16LE)
+empty_utf8 = S.new.force_encoding(E::UTF_8)
+empty_utf16le = S.new.force_encoding(E::UTF_16LE)
 
 assert_equal true, bonjour_ascii.ascii_only?
 assert_equal true, bonjour_utf8.ascii_only?
@@ -307,10 +309,20 @@ assert_equal E::US_ASCII, E.compatible?(bonjour_ascii, bonjour_ascii)
 assert_equal E::US_ASCII, E.compatible?(bonjour_ascii, bonjour_utf8)
 assert_equal E::UTF_8, E.compatible?(bonjour_utf8, bonjour_ascii)
 assert_equal E::UTF_8, E.compatible?(bonjour_utf8, bonjour_utf8)
+assert_equal E::UTF_8, E.compatible?(empty_utf8, empty_utf16le)
+assert_equal E::UTF_8, E.compatible?(empty_utf16le, ohayou_utf8)
+assert_equal E::UTF_8, E.compatible?(ohayou_utf8, empty_utf16le)
+assert_equal E::UTF_16LE, E.compatible?(empty_utf8, ohayou_utf16le)
+assert_equal E::UTF_16LE, E.compatible?(ohayou_utf16le, empty_utf8)
 assert_equal nil, E.compatible?(bonjour_ascii, bonjour_utf16le)
 assert_equal nil, E.compatible?(bonjour_utf16le, bonjour_ascii)
 assert_equal nil, E.compatible?(ohayou_utf8, ohayou_utf16le)
 assert_equal nil, E.compatible?(ohayou_utf16le, ohayou_utf8)
+
+assert_equal S.new('ab'), S.new('a') + S.new('b')
+assert_equal S.new('b'), S.new + S.new('b')
+assert_equal S.new('a'), S.new('a') + S.new
+assert_equal S.new, S.new + S.new
 
 if $tests_failed_count == 0
   puts "everything's fine"

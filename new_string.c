@@ -637,10 +637,16 @@ str_invert_byte_order(string_t *self)
 
 
 static encoding_t *
-str_enc_compatible(string_t *str1, string_t *str2)
+str_compatible_encoding(string_t *str1, string_t *str2)
 {
     if (str1->encoding == str2->encoding) {
 	return str1->encoding;
+    }
+    if (str2->length_in_bytes == 0) {
+	return str1->encoding;
+    }
+    if (str1->length_in_bytes == 0) {
+	return str2->encoding;
     }
     if (str_is_ruby_ascii_only(str1) && str_is_ruby_ascii_only(str2)) {
 	return str1->encoding;
@@ -1107,7 +1113,9 @@ str_get_characters(string_t *self, long start, long end, bool ucs2_mode)
 	    return NULL;
 	}
     }
-    str_try_making_data_uchars(self);
+    if (!self->encoding->single_byte_encoding && !str_is_stored_in_uchars(self)) {
+	str_try_making_data_uchars(self);
+    }
     if (str_is_stored_in_uchars(self)) {
 	if (ucs2_mode || str_known_not_to_have_any_supplementary(self)) {
 	    long length = BYTES_TO_UCHARS(self->length_in_bytes);
@@ -1143,7 +1151,9 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
     if (self->length_in_bytes == 0) {
 	return NULL;
     }
-    str_try_making_data_uchars(self);
+    if (!self->encoding->single_byte_encoding && !str_is_stored_in_uchars(self)) {
+	str_try_making_data_uchars(self);
+    }
     if (str_is_stored_in_uchars(self)) {
 	if (ucs2_mode || str_known_not_to_have_any_supplementary(self)) {
 	    string_t *str = str_get_character_fixed_width(self, index, 2);
@@ -1294,6 +1304,48 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
     }
 }
 
+static string_t *
+str_plus(string_t *str1, string_t *str2)
+{
+    encoding_t *new_encoding = str_compatible_encoding(str1, str2);
+    if (new_encoding == NULL) {
+	abort(); // TODO
+    }
+    string_t *new_str = str_alloc();
+    new_str->encoding = new_encoding;
+    if ((str1->length_in_bytes == 0) && (str2->length_in_bytes == 0)) {
+	return new_str;
+    }
+    bool str1_in_uchars = str_is_stored_in_uchars(str1);
+    bool str2_in_uchars = str_is_stored_in_uchars(str2);
+
+    if (str1_in_uchars == str2_in_uchars) {
+simple_plus:
+	str_set_stored_in_uchars(new_str, str1_in_uchars);
+	long length_in_bytes = str1->length_in_bytes + str2->length_in_bytes;
+	new_str->data.bytes = xmalloc(length_in_bytes);
+	if (str1->length_in_bytes > 0) {
+	    memcpy(new_str->data.bytes, str1->data.bytes, str1->length_in_bytes);
+	}
+	if (str2->length_in_bytes > 0) {
+	    memcpy(new_str->data.bytes + str1->length_in_bytes, str2->data.bytes, str2->length_in_bytes);
+	}
+	new_str->capacity_in_bytes = new_str->length_in_bytes = length_in_bytes;
+    }
+    else {
+	if (str_try_making_data_uchars(str1) && str_try_making_data_uchars(str2)) {
+	    str1_in_uchars = str2_in_uchars = true;
+	}
+	else {
+	    str_make_data_binary(str1);
+	    str_make_data_binary(str2);
+	    str1_in_uchars = str2_in_uchars = false;
+	}
+	goto simple_plus;
+    }
+    return new_str;
+}
+
 static bool
 str_equal_to_str(string_t *self, string_t *str)
 {
@@ -1351,7 +1403,7 @@ mr_enc_s_is_compatible(VALUE klass, SEL sel, VALUE str1, VALUE str2)
 {
     assert(OBJC_CLASS(str1) == rb_cMRString);
     assert(OBJC_CLASS(str2) == rb_cMRString);
-    encoding_t *encoding = str_enc_compatible(STR(str1), STR(str2));
+    encoding_t *encoding = str_compatible_encoding(STR(str1), STR(str2));
     if (encoding == NULL) {
 	return Qnil;
     }
@@ -1510,6 +1562,15 @@ mr_str_getchar(VALUE self, SEL sel, VALUE index)
 }
 
 static VALUE
+mr_str_plus(VALUE self, SEL sel, VALUE str)
+{
+    if (OBJC_CLASS(str) != rb_cMRString) {
+	abort(); // TODO
+    }
+    return (VALUE)str_plus(STR(self), STR(str));
+}
+
+static VALUE
 mr_str_equal(VALUE self, SEL sel, VALUE str)
 {
     if (OBJC_CLASS(str) != rb_cMRString) {
@@ -1555,6 +1616,7 @@ Init_MRString(void)
     rb_objc_define_method(rb_cMRString, "valid_encoding?", mr_str_is_valid_encoding, 0);
     rb_objc_define_method(rb_cMRString, "ascii_only?", mr_str_is_ascii_only, 0);
     rb_objc_define_method(rb_cMRString, "[]", mr_str_aref, -1);
+    rb_objc_define_method(rb_cMRString, "+", mr_str_plus, 1);
     rb_objc_define_method(rb_cMRString, "==", mr_str_equal, 1);
     rb_objc_define_method(rb_cMRString, "!=", mr_str_not_equal, 1);
 
