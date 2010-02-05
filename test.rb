@@ -298,6 +298,7 @@ ohayou_utf8 = read_data('ohayougozaimasu', :UTF_8)
 ohayou_utf16le = read_data('ohayougozaimasu', :UTF_16LE)
 
 assert_equal true, bonjour_ascii.ascii_only?
+assert_equal true, bonjour_utf8.ascii_only?
 assert_equal false, bonjour_utf16le.ascii_only?
 assert_equal false, ohayou_utf8.ascii_only?
 assert_equal false, ohayou_utf16le.ascii_only?
