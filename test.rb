@@ -291,6 +291,9 @@ end
   assert_equal 4, getchar(data, -1).bytesize
 end
 
+a = S.new('a').force_encoding(E::ASCII)
+assert_equal E::US_ASCII, E.compatible?(a, a)
+
 if $tests_failed_count == 0
   puts "everything's fine"
 else

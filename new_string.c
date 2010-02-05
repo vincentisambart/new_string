@@ -284,6 +284,9 @@ create_encodings(void)
     default_internal = encodings[ENCODING_UTF16_NATIVE];
 }
 
+static VALUE
+mr_enc_s_is_compatible(VALUE klass, SEL sel, VALUE str1, VALUE str2);
+
 void
 Init_MREncoding(void)
 {
@@ -300,7 +303,8 @@ Init_MREncoding(void)
     rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "name_list", mr_enc_s_name_list, 0);
     rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "aliases", mr_enc_s_aliases, 0);
     //rb_define_singleton_method(rb_cMREncoding, "find", enc_find, 1);
-    //rb_define_singleton_method(rb_cMREncoding, "compatible?", enc_compatible_p, 2);
+    // it's defined on Encoding, but it requires String's internals so it's defined with String
+    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "compatible?", mr_enc_s_is_compatible, 2);
 
     //rb_define_method(rb_cEncoding, "_dump", enc_dump, -1);
     //rb_define_singleton_method(rb_cEncoding, "_load", enc_load, 1);
@@ -620,6 +624,16 @@ str_invert_byte_order(string_t *self)
 }
 
 
+static encoding_t *
+str_enc_compatible(string_t *str1, string_t *str2)
+{
+    if (str1->encoding == str2->encoding) {
+	return str1->encoding;
+    }
+    abort();
+}
+
+
 static string_t *
 str_alloc(void)
 {
@@ -696,6 +710,7 @@ str_clear(string_t *self)
 {
     self->length_in_bytes = 0;
 }
+
 
 static void
 str_make_data_binary(string_t *self)
@@ -1315,6 +1330,21 @@ str_equal_to_str(string_t *self, string_t *str)
 
 //----------------------------------------------
 // Functions called by MacRuby
+
+static VALUE
+mr_enc_s_is_compatible(VALUE klass, SEL sel, VALUE str1, VALUE str2)
+{
+    assert(OBJC_CLASS(str1) == rb_cMRString);
+    assert(OBJC_CLASS(str2) == rb_cMRString);
+    encoding_t *encoding = str_enc_compatible(STR(str1), STR(str2));
+    if (encoding == NULL) {
+	return Qnil;
+    }
+    else {
+	return (VALUE)encoding;
+    }
+}
+
 
 static VALUE
 mr_str_initialize(VALUE self, SEL sel, int argc, VALUE *argv)
