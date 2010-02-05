@@ -775,7 +775,7 @@ str_try_making_data_uchars(string_t *self)
     }
     else if (self->length_in_bytes == 0) {
 	// for empty strings, nothing to convert
-	str_set_stored_in_uchars(self);
+	str_set_stored_in_uchars(self, true);
 	return true;
     }
     else if (str_known_to_have_an_invalid_encoding(self)) {
@@ -1105,6 +1105,8 @@ str_get_characters(string_t *self, long start, long end, bool ucs2_mode)
     abort(); // TODO
 }
 
+// TODO: as get_characters and get_character_at are nearly the same,
+// make them one function (with a boolean indicating if it's only for 1 character)
 static string_t *
 str_get_character_at(string_t *self, long index, bool ucs2_mode)
 {
