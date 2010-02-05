@@ -24,8 +24,6 @@
 // - use rb_usascii_str_new_cstr instead of rb_str_new2
 
 VALUE rb_cMREncoding;
-VALUE rb_eEncodingError;
-VALUE rb_eEncCompatError;
 
 typedef struct {
     struct RBasic basic;
@@ -294,9 +292,6 @@ Init_MREncoding(void)
 {
     rb_cMREncoding = rb_define_class("MREncoding", rb_cObject);
     rb_undef_alloc_func(rb_cMREncoding);
-
-    rb_eEncodingError = rb_define_class("EncodingError", rb_eStandardError);
-    rb_eEncCompatError = rb_define_class_under(rb_cMREncoding, "CompatibilityError", rb_eEncodingError);
 
     rb_objc_define_method(rb_cMREncoding, "to_s", mr_enc_name, 0);
     rb_objc_define_method(rb_cMREncoding, "inspect", mr_enc_inspect, 0);
@@ -1317,28 +1312,17 @@ str_plus(string_t *str1, string_t *str2)
 	rb_raise(rb_eEncCompatError, "incompatible character encodings: %s and %s",
 		str1->encoding->public_name, str2->encoding->public_name);
     }
+
     string_t *new_str = str_alloc();
     new_str->encoding = new_encoding;
     if ((str1->length_in_bytes == 0) && (str2->length_in_bytes == 0)) {
 	return new_str;
     }
+
     bool str1_in_uchars = str_is_stored_in_uchars(str1);
     bool str2_in_uchars = str_is_stored_in_uchars(str2);
 
-    if (str1_in_uchars == str2_in_uchars) {
-simple_plus:
-	str_set_stored_in_uchars(new_str, str1_in_uchars);
-	long length_in_bytes = str1->length_in_bytes + str2->length_in_bytes;
-	new_str->data.bytes = xmalloc(length_in_bytes);
-	if (str1->length_in_bytes > 0) {
-	    memcpy(new_str->data.bytes, str1->data.bytes, str1->length_in_bytes);
-	}
-	if (str2->length_in_bytes > 0) {
-	    memcpy(new_str->data.bytes + str1->length_in_bytes, str2->data.bytes, str2->length_in_bytes);
-	}
-	new_str->capacity_in_bytes = new_str->length_in_bytes = length_in_bytes;
-    }
-    else {
+    if (str1_in_uchars != str2_in_uchars) {
 	if (str_try_making_data_uchars(str1) && str_try_making_data_uchars(str2)) {
 	    str1_in_uchars = str2_in_uchars = true;
 	}
@@ -1347,8 +1331,19 @@ simple_plus:
 	    str_make_data_binary(str2);
 	    str1_in_uchars = str2_in_uchars = false;
 	}
-	goto simple_plus;
     }
+
+    str_set_stored_in_uchars(new_str, str1_in_uchars);
+    long length_in_bytes = str1->length_in_bytes + str2->length_in_bytes;
+    new_str->data.bytes = xmalloc(length_in_bytes);
+    if (str1->length_in_bytes > 0) {
+	memcpy(new_str->data.bytes, str1->data.bytes, str1->length_in_bytes);
+    }
+    if (str2->length_in_bytes > 0) {
+	memcpy(new_str->data.bytes + str1->length_in_bytes, str2->data.bytes, str2->length_in_bytes);
+    }
+    new_str->capacity_in_bytes = new_str->length_in_bytes = length_in_bytes;
+
     return new_str;
 }
 
