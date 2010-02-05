@@ -381,13 +381,13 @@ str_unset_facultative_flags(string_t *self)
 }
 
 static bool
-str_already_known_to_have_an_invalid_encoding(string_t *self)
+str_known_to_have_an_invalid_encoding(string_t *self)
 {
     return (self->flags & (STRING_VALID_ENCODING_SET | STRING_VALID_ENCODING)) == STRING_VALID_ENCODING_SET;
 }
 
 static bool
-str_already_known_not_to_have_any_supplementary(string_t *self)
+str_known_not_to_have_any_supplementary(string_t *self)
 {
     return (self->flags & (STRING_HAS_SUPPLEMENTARY_SET | STRING_HAS_SUPPLEMENTARY)) == STRING_HAS_SUPPLEMENTARY_SET;
 }
@@ -773,7 +773,12 @@ str_try_making_data_uchars(string_t *self)
 	// you can't convert binary to anything
 	return false;
     }
-    else if (str_already_known_to_have_an_invalid_encoding(self)) {
+    else if (self->length_in_bytes == 0) {
+	// for empty strings, nothing to convert
+	str_set_stored_in_uchars(self);
+	return true;
+    }
+    else if (str_known_to_have_an_invalid_encoding(self)) {
 	return false;
     }
 
@@ -1010,7 +1015,6 @@ str_force_encoding(string_t *self, encoding_t *enc)
     if (NATIVE_UTF16_ENC(self->encoding)) {
 	str_set_stored_in_uchars(self, true);
     }
-    str_try_making_data_uchars(self);
 }
 
 static string_t *
@@ -1073,8 +1077,9 @@ str_get_characters(string_t *self, long start, long end, bool ucs2_mode)
 	    return NULL;
 	}
     }
+    str_try_making_data_uchars(self);
     if (str_is_stored_in_uchars(self)) {
-	if (ucs2_mode || str_already_known_not_to_have_any_supplementary(self)) {
+	if (ucs2_mode || str_known_not_to_have_any_supplementary(self)) {
 	    long length = BYTES_TO_UCHARS(self->length_in_bytes);
 	    if (start < 0) {
 		start += length;
@@ -1106,8 +1111,9 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
     if (self->length_in_bytes == 0) {
 	return NULL;
     }
+    str_try_making_data_uchars(self);
     if (str_is_stored_in_uchars(self)) {
-	if (ucs2_mode || str_already_known_not_to_have_any_supplementary(self)) {
+	if (ucs2_mode || str_known_not_to_have_any_supplementary(self)) {
 	    string_t *str = str_get_character_fixed_width(self, index, 2);
 	    if ((str != NULL) && U16_IS_SURROGATE(str->data.uchars[0])) {
 		if (!UTF16_ENC(str->encoding)) {
@@ -1174,7 +1180,7 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
 	else if (!ucs2_mode && UTF32_ENC(self->encoding)) { // UTF-32 only in non UCS-2 mode
 	    return str_get_character_fixed_width(self, index, 4);
 	}
-	else if (NON_NATIVE_UTF16_ENC(self->encoding) && (ucs2_mode || str_already_known_not_to_have_any_supplementary(self))) {
+	else if (NON_NATIVE_UTF16_ENC(self->encoding) && (ucs2_mode || str_known_not_to_have_any_supplementary(self))) {
 	    return str_get_character_fixed_width(self, index, 2);
 	}
 	else {
