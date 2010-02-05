@@ -3,7 +3,6 @@ Necessary before merging the code into MacRuby:
 - String#[]
 - String#[]=
 - String#concat
-- String#+
 - String#encode
 - String#inspect
 - add NSData to the types of parameters that can be given to String#replace

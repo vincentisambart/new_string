@@ -324,6 +324,8 @@ assert_equal S.new('b'), S.new + S.new('b')
 assert_equal S.new('a'), S.new('a') + S.new
 assert_equal S.new, S.new + S.new
 
+assert_exception_raised(E::CompatibilityError) { ohayou_utf8 + ohayou_utf16le }
+
 if $tests_failed_count == 0
   puts "everything's fine"
 else

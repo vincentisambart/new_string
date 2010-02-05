@@ -24,6 +24,8 @@
 // - use rb_usascii_str_new_cstr instead of rb_str_new2
 
 VALUE rb_cMREncoding;
+VALUE rb_eEncodingError;
+VALUE rb_eEncCompatError;
 
 typedef struct {
     struct RBasic basic;
@@ -292,6 +294,9 @@ Init_MREncoding(void)
 {
     rb_cMREncoding = rb_define_class("MREncoding", rb_cObject);
     rb_undef_alloc_func(rb_cMREncoding);
+
+    rb_eEncodingError = rb_define_class("EncodingError", rb_eStandardError);
+    rb_eEncCompatError = rb_define_class_under(rb_cMREncoding, "CompatibilityError", rb_eEncodingError);
 
     rb_objc_define_method(rb_cMREncoding, "to_s", mr_enc_name, 0);
     rb_objc_define_method(rb_cMREncoding, "inspect", mr_enc_inspect, 0);
@@ -1309,7 +1314,8 @@ str_plus(string_t *str1, string_t *str2)
 {
     encoding_t *new_encoding = str_compatible_encoding(str1, str2);
     if (new_encoding == NULL) {
-	abort(); // TODO
+	rb_raise(rb_eEncCompatError, "incompatible character encodings: %s and %s",
+		str1->encoding->public_name, str2->encoding->public_name);
     }
     string_t *new_str = str_alloc();
     new_str->encoding = new_encoding;
