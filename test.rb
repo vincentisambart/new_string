@@ -340,6 +340,10 @@ assert_equal nil, E.compatible?(bonjour_utf16le, bonjour_ascii)
 assert_equal nil, E.compatible?(ohayou_utf8, ohayou_utf16le)
 assert_equal nil, E.compatible?(ohayou_utf16le, ohayou_utf8)
 
+assert_equal true, empty_utf8.valid_encoding?
+assert_equal true, bonjour_utf8.force_encoding(E::BINARY).ascii_only?
+assert_equal false, ohayou_utf8.force_encoding(E::BINARY).ascii_only?
+
 assert_equal S.new('ab'), S.new('a') + S.new('b')
 assert_equal S.new('b'), S.new + S.new('b')
 assert_equal S.new('a'), S.new('a') + S.new

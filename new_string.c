@@ -565,10 +565,22 @@ str_update_flags_utf16(string_t *self)
 static void
 str_update_flags(string_t *self)
 {
-    if ((self->length_in_bytes == 0) || BINARY_ENC(self->encoding)) {
-	str_set_valid_encoding(self, false);
+    if (self->length_in_bytes == 0) {
+	str_set_valid_encoding(self, true);
 	str_set_ascii_only(self, true);
 	str_set_has_supplementary(self, false);
+    }
+    else if (BINARY_ENC(self->encoding)) {
+	str_set_valid_encoding(self, true);
+	str_set_has_supplementary(self, false);
+	bool ascii_only = true;
+	for (long i = 0; i < self->length_in_bytes; ++i) {
+	    if ((uint8_t)self->data.bytes[i] > 127) {
+		ascii_only = false;
+		break;
+	    }
+	}
+	str_set_ascii_only(self, ascii_only);
     }
     else if (str_is_stored_in_uchars(self) || UTF16_ENC(self->encoding)) {
 	str_update_flags_utf16(self);
@@ -1652,7 +1664,7 @@ mr_str_not_equal(VALUE self, SEL sel, VALUE str)
 static VALUE
 mr_str_is_stored_in_uchars(VALUE self, SEL sel)
 {
-    return str_is_stored_in_uchars(STR(self));
+    return str_is_stored_in_uchars(STR(self)) ? Qtrue : Qfalse;
 }
 
 void
