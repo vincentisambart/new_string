@@ -648,13 +648,24 @@ str_compatible_encoding(string_t *str1, string_t *str2)
     if (str1->length_in_bytes == 0) {
 	return str2->encoding;
     }
-    if (str1->encoding->ascii_compatible != str2->encoding->ascii_compatible) {
+    if (!str1->encoding->ascii_compatible || !str2->encoding->ascii_compatible) {
 	return NULL;
     }
     if (str_is_ruby_ascii_only(str1) && str_is_ruby_ascii_only(str2)) {
 	return str1->encoding;
     }
     return NULL;
+}
+
+static encoding_t *
+str_must_have_compatible_encoding(string_t *str1, string_t *str2)
+{
+    encoding_t *new_encoding = str_compatible_encoding(str1, str2);
+    if (new_encoding == NULL) {
+	rb_raise(rb_eEncCompatError, "incompatible character encodings: %s and %s",
+		str1->encoding->public_name, str2->encoding->public_name);
+    }
+    return new_encoding;
 }
 
 
@@ -1308,13 +1319,9 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
 }
 
 static string_t *
-str_plus(string_t *str1, string_t *str2)
+str_plus_string(string_t *str1, string_t *str2)
 {
-    encoding_t *new_encoding = str_compatible_encoding(str1, str2);
-    if (new_encoding == NULL) {
-	rb_raise(rb_eEncCompatError, "incompatible character encodings: %s and %s",
-		str1->encoding->public_name, str2->encoding->public_name);
-    }
+    encoding_t *new_encoding = str_must_have_compatible_encoding(str1, str2);
 
     string_t *new_str = str_alloc();
     new_str->encoding = new_encoding;
@@ -1350,8 +1357,49 @@ str_plus(string_t *str1, string_t *str2)
     return new_str;
 }
 
+static void
+str_concat_string(string_t *self, string_t *str)
+{
+    if (str->length_in_bytes == 0) {
+	return;
+    }
+    if (self->length_in_bytes == 0) {
+	str_replace(self, (VALUE)str);
+	return;
+    }
+
+    str_must_have_compatible_encoding(self, str);
+
+    if (str_is_stored_in_uchars(self) != str_is_stored_in_uchars(str)) {
+	// we try not to change the internal format of self if it's possible
+	// (because self is generally bigger that the string concatenated)
+	if (str_is_stored_in_uchars(self)) {
+	    if (!str_try_making_data_uchars(str)) {
+		str_make_data_binary(self);
+	    }
+	}
+	else {
+	    str_make_data_binary(str);
+	}
+    }
+
+    long new_length_in_bytes = self->length_in_bytes + str->length_in_bytes;
+    // TODO: we should maybe merge flags
+    // (if both are ASCII-only, the concatenation is ASCII-only,
+    //  though I'm not sure all the tests required are worth doing)
+    str_unset_facultative_flags(self);
+    if (self->capacity_in_bytes < new_length_in_bytes) {
+	uint8_t *bytes = xmalloc(new_length_in_bytes);
+	memcpy(bytes, self->data.bytes, self->length_in_bytes);
+	GC_WB(&self->data.bytes, bytes);
+	self->capacity_in_bytes = new_length_in_bytes;
+    }
+    memcpy(self->data.bytes + self->length_in_bytes, str->data.bytes, str->length_in_bytes);
+    self->length_in_bytes = new_length_in_bytes;
+}
+
 static bool
-str_is_equal_to_str(string_t *self, string_t *str)
+str_is_equal_to_string(string_t *self, string_t *str)
 {
     if (self == str) {
 	return true;
@@ -1570,7 +1618,17 @@ mr_str_plus(VALUE self, SEL sel, VALUE str)
     if (OBJC_CLASS(str) != rb_cMRString) {
 	abort(); // TODO
     }
-    return (VALUE)str_plus(STR(self), STR(str));
+    return (VALUE)str_plus_string(STR(self), STR(str));
+}
+
+static VALUE
+mr_str_concat(VALUE self, SEL sel, VALUE str)
+{
+    if (OBJC_CLASS(str) != rb_cMRString) {
+	abort(); // TODO (should also accept integers)
+    }
+    str_concat_string(STR(self), STR(str));
+    return self;
 }
 
 static VALUE
@@ -1579,7 +1637,7 @@ mr_str_equal(VALUE self, SEL sel, VALUE str)
     if (OBJC_CLASS(str) != rb_cMRString) {
 	abort(); // TODO
     }
-    return str_is_equal_to_str(STR(self), STR(str)) ? Qtrue : Qfalse;
+    return str_is_equal_to_string(STR(self), STR(str)) ? Qtrue : Qfalse;
 }
 
 static VALUE
@@ -1588,7 +1646,7 @@ mr_str_not_equal(VALUE self, SEL sel, VALUE str)
     if (OBJC_CLASS(str) != rb_cMRString) {
 	abort(); // TODO
     }
-    return str_is_equal_to_str(STR(self), STR(str)) ? Qfalse : Qtrue;
+    return str_is_equal_to_string(STR(self), STR(str)) ? Qfalse : Qtrue;
 }
 
 static VALUE
@@ -1621,6 +1679,8 @@ Init_MRString(void)
     rb_objc_define_method(rb_cMRString, "ascii_only?", mr_str_is_ascii_only, 0);
     rb_objc_define_method(rb_cMRString, "[]", mr_str_aref, -1);
     rb_objc_define_method(rb_cMRString, "+", mr_str_plus, 1);
+    rb_objc_define_method(rb_cMRString, "<<", mr_str_concat, 1);
+    rb_objc_define_method(rb_cMRString, "concat", mr_str_concat, 1);
     rb_objc_define_method(rb_cMRString, "==", mr_str_equal, 1);
     rb_objc_define_method(rb_cMRString, "!=", mr_str_not_equal, 1);
 

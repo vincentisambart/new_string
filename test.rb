@@ -345,11 +345,31 @@ assert_equal S.new('b'), S.new + S.new('b')
 assert_equal S.new('a'), S.new('a') + S.new
 assert_equal S.new, S.new + S.new
 
+s = empty_utf8.dup
+s << empty_utf16le
+assert_equal E::UTF_8, s.encoding
+
+s = empty_utf8.dup
+s << bonjour_utf16le
+assert_equal E::UTF_16LE, s.encoding
+
+s = S.new('a')
+old_s = s.dup
+s << S.new('')
+assert_equal old_s, s
+s << S.new('b')
+assert_equal S.new('ab'), s
+old_s = s.dup
+s.concat(S.new('c'))
+assert_equal S.new('abc'), s
+assert_not_equal old_s, s
+
 assert_equal empty_utf8, empty_utf16le
 assert_equal bonjour_utf8, bonjour_ascii
 assert_not_equal bonjour_utf16le, bonjour_ascii
 
 assert_exception_raised(Encoding::CompatibilityError) { ohayou_utf8 + ohayou_utf16le }
+assert_exception_raised(Encoding::CompatibilityError) { ohayou_utf8 << ohayou_utf16le }
 
 if $tests_failed_count == 0
   puts "everything's fine"
