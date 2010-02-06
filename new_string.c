@@ -648,6 +648,9 @@ str_compatible_encoding(string_t *str1, string_t *str2)
     if (str1->length_in_bytes == 0) {
 	return str2->encoding;
     }
+    if (str1->encoding->ascii_compatible != str2->encoding->ascii_compatible) {
+	return NULL;
+    }
     if (str_is_ruby_ascii_only(str1) && str_is_ruby_ascii_only(str2)) {
 	return str1->encoding;
     }
@@ -1348,7 +1351,7 @@ str_plus(string_t *str1, string_t *str2)
 }
 
 static bool
-str_equal_to_str(string_t *self, string_t *str)
+str_is_equal_to_str(string_t *self, string_t *str)
 {
     if (self == str) {
 	return true;
@@ -1369,7 +1372,7 @@ str_equal_to_str(string_t *self, string_t *str)
 	return false;
     }
 
-    if (self->encoding == str->encoding) {
+    if (str_compatible_encoding(self, str) != NULL) {
 	if (str_is_stored_in_uchars(self) == str_is_stored_in_uchars(str)) {
 	    if (self->length_in_bytes != str->length_in_bytes) {
 		return false;
@@ -1391,8 +1394,8 @@ str_equal_to_str(string_t *self, string_t *str)
 	    }
 	}
     }
-    else { // different encodings
-	abort(); // TODO
+    else { // incompatible encodings
+	return false;
     }
 }
 
@@ -1576,7 +1579,7 @@ mr_str_equal(VALUE self, SEL sel, VALUE str)
     if (OBJC_CLASS(str) != rb_cMRString) {
 	abort(); // TODO
     }
-    return str_equal_to_str(STR(self), STR(str)) ? Qtrue : Qfalse;
+    return str_is_equal_to_str(STR(self), STR(str)) ? Qtrue : Qfalse;
 }
 
 static VALUE
@@ -1585,7 +1588,7 @@ mr_str_not_equal(VALUE self, SEL sel, VALUE str)
     if (OBJC_CLASS(str) != rb_cMRString) {
 	abort(); // TODO
     }
-    return str_equal_to_str(STR(self), STR(str)) ? Qfalse : Qtrue;
+    return str_is_equal_to_str(STR(self), STR(str)) ? Qfalse : Qtrue;
 }
 
 static VALUE

@@ -345,6 +345,10 @@ assert_equal S.new('b'), S.new + S.new('b')
 assert_equal S.new('a'), S.new('a') + S.new
 assert_equal S.new, S.new + S.new
 
+assert_equal empty_utf8, empty_utf16le
+assert_equal bonjour_utf8, bonjour_ascii
+assert_not_equal bonjour_utf16le, bonjour_ascii
+
 assert_exception_raised(Encoding::CompatibilityError) { ohayou_utf8 + ohayou_utf16le }
 
 if $tests_failed_count == 0
