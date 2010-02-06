@@ -714,7 +714,7 @@ str_replace(string_t *self, VALUE arg)
 	self->capacity_in_bytes = self->length_in_bytes = str->length_in_bytes;
 	self->flags = str->flags;
 	if (self->length_in_bytes != 0) {
-	    GC_WB(self->data.bytes, xmalloc(self->length_in_bytes));
+	    GC_WB(&self->data.bytes, xmalloc(self->length_in_bytes));
 	    memcpy(self->data.bytes, str->data.bytes, self->length_in_bytes);
 	}
     }
@@ -1417,10 +1417,9 @@ mr_enc_s_is_compatible(VALUE klass, SEL sel, VALUE str1, VALUE str2)
 static VALUE
 mr_str_initialize(VALUE self, SEL sel, int argc, VALUE *argv)
 {
-    VALUE arg;
     if (argc > 0) {
-	rb_scan_args(argc, argv, "01", &arg);
-	str_replace(STR(self), arg);
+	assert(argc == 1);
+	str_replace(STR(self), argv[0]);
     }
     return self;
 }
@@ -1605,6 +1604,7 @@ Init_MRString(void)
     rb_objc_define_method(OBJC_CLASS(rb_cMRString), "alloc", mr_str_s_alloc, 0);
 
     rb_objc_define_method(rb_cMRString, "initialize", mr_str_initialize, -1);
+    rb_objc_define_method(rb_cMRString, "initialize_copy", mr_str_replace, 1);
     rb_objc_define_method(rb_cMRString, "replace", mr_str_replace, 1);
     rb_objc_define_method(rb_cMRString, "clear", mr_str_clear, 0);
     rb_objc_define_method(rb_cMRString, "encoding", mr_str_encoding, 0);

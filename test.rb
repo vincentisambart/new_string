@@ -115,6 +115,10 @@ assert_equal '', ''[0, 100]
 UNICODE_ENCODINGS.each do |enc|
   data = read_data('ohayougozaimasu', enc)
 
+  assert_equal data, S.new(data)
+  assert_equal data, data.dup
+  assert_equal data, data.clone
+
   assert_equal 9, data.length
   assert_equal 9, data.chars_count if MACRUBY
   data.length.times do |i|
@@ -158,6 +162,10 @@ SURROGATE_UTF16_BYTES = [0xD8, 0x40, 0xDC, 0x0B]
 UNICODE_ENCODINGS.each do |enc|
   data = read_data('surrogate', enc)
 
+  assert_equal data, S.new(data)
+  assert_equal data, data.dup
+  assert_equal data, data.clone
+
   if enc == :UTF_16LE or enc == :UTF_16BE
     data.bytesize.times do |i|
       if enc == :UTF_16LE
@@ -195,6 +203,10 @@ SURROGATE_WITH_INVALID_BYTES = [0x00, 0x02, 0x00, 0x0B, 0xFF, 0xFF, 0xFF, 0xFF]
 [:UTF_32LE, :UTF_32BE].each do |enc|
   data = read_data('surrogate_with_invalid', enc)
 
+  assert_equal data, S.new(data)
+  assert_equal data, data.dup
+  assert_equal data, data.clone
+
   assert_equal 8, data.bytesize
   data.bytesize.times do |i|
     if enc == :UTF_32BE
@@ -224,6 +236,10 @@ end
 
 UNICODE_ENCODINGS.each do |enc|
   data = read_data('cut', enc)
+
+  assert_equal data, S.new(data)
+  assert_equal data, data.dup
+  assert_equal data, data.clone
 
   assert_equal false, data.valid_encoding?
   assert_equal false, data[-1].valid_encoding?
@@ -262,9 +278,14 @@ end
 
 [:UTF_16LE, :UTF_16BE].each do |enc|
   data = read_data('inverted_surrogate_plus_surrogate', enc)
+
+  assert_equal data, S.new(data)
+  assert_equal data, data.dup
+  assert_equal data, data.clone
+
   assert_equal 8, data.bytesize
   assert_equal false, data.valid_encoding?
-  #assert_equal 1, (data[1]+data[0]).length # for when we support +
+  assert_equal 1, chars_count(data[1]+data[0])
 
   if MACRUBY
     assert_equal 4, data.length
