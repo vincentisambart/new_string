@@ -1649,6 +1649,25 @@ mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
 		    }
 		}
 	}
+	// TODO: use rb_range_values instead of rb_range_extract
+	if (rb_obj_is_kind_of(index, rb_cRange)) {
+	    VALUE rb_start = 0, rb_end = 0;
+	    bool exclude_end = false;
+	    rb_range_extract(index, &rb_start, &rb_end, &exclude_end);
+	    long start = NUM2LONG(rb_start);
+	    long end = NUM2LONG(rb_end);
+	    if (exclude_end) {
+		--end;
+	    }
+	    string_t *ret = str_get_characters(STR(self), start, end, true);
+	    if (ret == NULL) {
+		return Qnil;
+	    }
+	    else {
+		return (VALUE)ret;
+	    }
+	}
+
 	abort(); // TODO
     }
     else if (argc == 2) {

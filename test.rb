@@ -111,6 +111,9 @@ assert_equal nil, ''[0]
 assert_equal nil, ''[0, -1]
 assert_equal '', ''[0, 0]
 assert_equal '', ''[0, 100]
+assert_equal '', ''[0..100]
+assert_equal '', ''[0..0]
+assert_equal '', ''[0...0]
 
 UNICODE_ENCODINGS.each do |enc|
   data = read_data('ohayougozaimasu', enc)
@@ -129,6 +132,7 @@ UNICODE_ENCODINGS.each do |enc|
     assert_equal true, c.valid_encoding?
   end
 
+  assert_equal '', data[1...1]
   assert_equal '', data[9, 0]
   assert_equal nil, data[10, 0]
   assert_equal 1, data[0, 1].length
@@ -248,6 +252,7 @@ UNICODE_ENCODINGS.each do |enc|
     assert_equal 10, data.chars_count if MACRUBY
     [ [data[8], data[9]],
       [data[8,1], data[9,1]],
+      [data[8..8], data[9..9]],
     ].each do |c1, c2|
       assert_equal 1, c1.length
       assert_equal 1, c1.bytesize
