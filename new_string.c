@@ -712,6 +712,7 @@ extern VALUE rb_cByteString;
 static void
 str_replace(string_t *self, VALUE arg)
 {
+    assert(!SPECIAL_CONST_P(arg)); // TODO
     VALUE klass = OBJC_CLASS(arg);
     if (klass == rb_cByteString) {
 	self->encoding = encodings[ENCODING_BINARY];
@@ -1119,7 +1120,7 @@ typedef struct {
 // continue not from the start but from a known position)
 // Note: However that would complicate the code for a case we don't care much about (not valid strings)
 static character_boundaries_t
-str_get_character_position(string_t *self, long index, bool ucs2_mode)
+str_get_character_boundaries(string_t *self, long index, bool ucs2_mode)
 {
     character_boundaries_t boundaries = {-1, -1};
 
@@ -1313,10 +1314,10 @@ str_get_character_position(string_t *self, long index, bool ucs2_mode)
 }
 
 static string_t *
-str_get_characters(string_t *self, long start, long end, bool ucs2_mode)
+str_get_characters(string_t *self, long first, long last, bool ucs2_mode)
 {
     if (self->length_in_bytes == 0) {
-	if (start == 0) {
+	if (first == 0) {
 	    return str_new_similar_empty_string(self);
 	}
 	else {
@@ -1326,31 +1327,35 @@ str_get_characters(string_t *self, long start, long end, bool ucs2_mode)
     if (!self->encoding->single_byte_encoding && !str_is_stored_in_uchars(self)) {
 	str_try_making_data_uchars(self);
     }
-    if (str_is_stored_in_uchars(self)) {
-	if (ucs2_mode || str_known_not_to_have_any_supplementary(self)) {
-	    long length = BYTES_TO_UCHARS(self->length_in_bytes);
-	    if (start < 0) {
-		start += length;
-		if (start < 0) {
-		    return NULL;
-		}
-	    }
-	    if (start > length) {
-		return NULL;
-	    }
-	    if (end < 0) {
-		end += length;
-	    }
-	    if (end <= start) {
-		return str_new_similar_empty_string(self);
-	    }
-	    return str_new_copy_of_part(self, UCHARS_TO_BYTES(start), UCHARS_TO_BYTES(end - start));
+    character_boundaries_t first_boundaries = str_get_character_boundaries(self, first, ucs2_mode);
+    character_boundaries_t last_boundaries = str_get_character_boundaries(self, last, ucs2_mode);
+
+    if (first_boundaries.start_offset_in_bytes == -1) {
+	if (last_boundaries.end_offset_in_bytes == -1) {
+	    // you cannot cut a surrogate in an encoding that is not UTF-16
+	    str_cannot_cut_surrogate();
 	}
 	else {
-	    abort(); // TODO
+	    return NULL;
 	}
     }
-    abort(); // TODO
+    else if (last_boundaries.end_offset_in_bytes == -1) {
+	// you cannot cut a surrogate in an encoding that is not UTF-16
+	str_cannot_cut_surrogate();
+    }
+
+    if (first_boundaries.start_offset_in_bytes == self->length_in_bytes) {
+	return str_new_similar_empty_string(self);
+    }
+    else if (first_boundaries.start_offset_in_bytes > self->length_in_bytes) {
+	return NULL;
+    }
+    if (last_boundaries.end_offset_in_bytes >= self->length_in_bytes) {
+	last_boundaries.end_offset_in_bytes = self->length_in_bytes;
+    }
+
+    return str_new_copy_of_part(self, first_boundaries.start_offset_in_bytes,
+	    last_boundaries.end_offset_in_bytes - first_boundaries.start_offset_in_bytes);
 }
 
 static string_t *
@@ -1364,7 +1369,7 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
 	// try to convert the string in UTF-16
 	str_try_making_data_uchars(self);
     }
-    character_boundaries_t boundaries = str_get_character_position(self, index, ucs2_mode);
+    character_boundaries_t boundaries = str_get_character_boundaries(self, index, ucs2_mode);
     if (boundaries.start_offset_in_bytes == -1) {
 	if (boundaries.end_offset_in_bytes == -1) {
 	    return NULL;
@@ -1524,8 +1529,8 @@ str_is_equal_to_string(string_t *self, string_t *str)
 static VALUE
 mr_enc_s_is_compatible(VALUE klass, SEL sel, VALUE str1, VALUE str2)
 {
-    assert(OBJC_CLASS(str1) == rb_cMRString);
-    assert(OBJC_CLASS(str2) == rb_cMRString);
+    assert(!SPECIAL_CONST_P(str1) && (OBJC_CLASS(str1) == rb_cMRString));
+    assert(!SPECIAL_CONST_P(str2) && (OBJC_CLASS(str2) == rb_cMRString));
     encoding_t *encoding = str_compatible_encoding(STR(str1), STR(str2));
     if (encoding == NULL) {
 	return Qnil;
@@ -1607,12 +1612,10 @@ static VALUE
 mr_str_force_encoding(VALUE self, SEL sel, VALUE encoding)
 {
     encoding_t *enc;
-    if (OBJC_CLASS(encoding) == rb_cMREncoding) {
-	enc = (encoding_t *)encoding;
-    }
-    else {
+    if (SPECIAL_CONST_P(encoding) || (OBJC_CLASS(encoding) != rb_cMREncoding)) {
 	abort(); // TODO
     }
+    enc = (encoding_t *)encoding;
     str_force_encoding(STR(self), enc);
     return self;
 }
@@ -1654,7 +1657,7 @@ mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
 	    return Qnil;
 	}
 	long start = NUM2LONG(argv[0]);
-	long end = start + length;
+	long end = start + length - 1;
 	if ((start < 0) && (end >= 0)) {
 	    end = -1;
 	}
@@ -1686,7 +1689,7 @@ mr_str_getchar(VALUE self, SEL sel, VALUE index)
 static VALUE
 mr_str_plus(VALUE self, SEL sel, VALUE str)
 {
-    if (OBJC_CLASS(str) != rb_cMRString) {
+    if (SPECIAL_CONST_P(str) || (OBJC_CLASS(str) != rb_cMRString)) {
 	abort(); // TODO
     }
     return (VALUE)str_plus_string(STR(self), STR(str));
@@ -1695,7 +1698,7 @@ mr_str_plus(VALUE self, SEL sel, VALUE str)
 static VALUE
 mr_str_concat(VALUE self, SEL sel, VALUE str)
 {
-    if (OBJC_CLASS(str) != rb_cMRString) {
+    if (SPECIAL_CONST_P(str) || (OBJC_CLASS(str) != rb_cMRString)) {
 	abort(); // TODO (should also accept integers)
     }
     str_concat_string(STR(self), STR(str));
@@ -1703,21 +1706,27 @@ mr_str_concat(VALUE self, SEL sel, VALUE str)
 }
 
 static VALUE
-mr_str_equal(VALUE self, SEL sel, VALUE str)
+mr_str_equal(VALUE self, SEL sel, VALUE compared_to)
 {
-    if (OBJC_CLASS(str) != rb_cMRString) {
+    if (SPECIAL_CONST_P(compared_to)) {
+	return Qfalse;
+    }
+    if (OBJC_CLASS(compared_to) != rb_cMRString) {
 	abort(); // TODO
     }
-    return str_is_equal_to_string(STR(self), STR(str)) ? Qtrue : Qfalse;
+    return str_is_equal_to_string(STR(self), STR(compared_to)) ? Qtrue : Qfalse;
 }
 
 static VALUE
-mr_str_not_equal(VALUE self, SEL sel, VALUE str)
+mr_str_not_equal(VALUE self, SEL sel, VALUE compared_to)
 {
-    if (OBJC_CLASS(str) != rb_cMRString) {
+    if (SPECIAL_CONST_P(compared_to)) {
+	return Qtrue;
+    }
+    if (OBJC_CLASS(compared_to) != rb_cMRString) {
 	abort(); // TODO
     }
-    return str_is_equal_to_string(STR(self), STR(str)) ? Qfalse : Qtrue;
+    return str_is_equal_to_string(STR(self), STR(compared_to)) ? Qfalse : Qtrue;
 }
 
 static VALUE

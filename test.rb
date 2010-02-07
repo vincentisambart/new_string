@@ -246,13 +246,16 @@ UNICODE_ENCODINGS.each do |enc|
   if enc == :UTF_8
     assert_equal 10, data.length
     assert_equal 10, data.chars_count if MACRUBY
-    c1, c2 = data[8], data[9]
-    assert_equal 1, c1.length
-    assert_equal 1, c1.bytesize
-    assert_equal 0xE3, c1.getbyte(0)
-    assert_equal 1, c2.length
-    assert_equal 1, c2.bytesize
-    assert_equal 0x81, c2.getbyte(0)
+    [ [data[8], data[9]],
+      [data[8,1], data[9,1]],
+    ].each do |c1, c2|
+      assert_equal 1, c1.length
+      assert_equal 1, c1.bytesize
+      assert_equal 0xE3, c1.getbyte(0)
+      assert_equal 1, c2.length
+      assert_equal 1, c2.bytesize
+      assert_equal 0x81, c2.getbyte(0)
+    end
   else
     assert_equal 9, data.length
     assert_equal 9, data.chars_count if MACRUBY
