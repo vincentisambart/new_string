@@ -913,7 +913,7 @@ str_length(string_t *self, bool ucs2_mode)
 	if (self->encoding->single_byte_encoding) {
 	    return self->length_in_bytes;
 	}
-	else if (ucs2_mode && UTF16_ENC(self->encoding)) {
+	else if (ucs2_mode && NON_NATIVE_UTF16_ENC(self->encoding)) {
 	    long length = BYTES_TO_UCHARS(self->length_in_bytes);
 	    if (ODD_NUMBER(self->length_in_bytes)) {
 		return length + 1;
@@ -1100,32 +1100,216 @@ str_new_copy_of_part(string_t *self, long offset_in_bytes, long length_in_bytes)
     return str;
 }
 
+// you cannot cut a surrogate in an encoding that is not UTF-16
+// (it's in theory possible to store the surrogate in
+//  UTF-8 or UTF-32 but that would be incorrect Unicode)
 NORETURN(static void
 str_cannot_cut_surrogate(void))
 {
     rb_raise(rb_eIndexError, "You can't cut a surrogate in two in an encoding that is not UTF-16");
 }
 
-static string_t *
-str_get_character_fixed_width(string_t *self, long index, long character_width)
+typedef struct {
+    long start_offset_in_bytes;
+    long end_offset_in_bytes;
+} character_boundaries_t;
+
+// TODO: be faster when we already did some computations for an other index
+// (we could reuse an already computed length and
+// continue not from the start but from a known position)
+// Note: However that would complicate the code for a case we don't care much about (not valid strings)
+static character_boundaries_t
+str_get_character_position(string_t *self, long index, bool ucs2_mode)
 {
-    long len = div_round_up(self->length_in_bytes, character_width);
-    if (index < 0) {
-	index += len;
-	if (index < 0) {
-	    return NULL;
+    character_boundaries_t boundaries = {-1, -1};
+
+    if (str_is_stored_in_uchars(self)) {
+	if (ucs2_mode || str_known_not_to_have_any_supplementary(self)) {
+	    if (index < 0) {
+		index += div_round_up(self->length_in_bytes, 2);
+		if (index < 0) {
+		    return boundaries;
+		}
+	    }
+	    boundaries.start_offset_in_bytes = UCHARS_TO_BYTES(index);
+	    boundaries.end_offset_in_bytes = boundaries.start_offset_in_bytes + 2;
+	    if (!UTF16_ENC(self->encoding)) {
+		long length = BYTES_TO_UCHARS(self->length_in_bytes);
+		if ((index < length) && U16_IS_SURROGATE(self->data.uchars[index])) {
+		    if (U16_IS_SURROGATE_LEAD(self->data.uchars[index])) {
+			boundaries.end_offset_in_bytes = -1;
+		    }
+		    else { // U16_IS_SURROGATE_TRAIL
+			boundaries.start_offset_in_bytes = -1;
+		    }
+		}
+	    }
+	}
+	else {
+	    // we don't have the length of the string, just the number of UChars
+	    // (uchars_count >= number of characters)
+	    long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);
+	    if ((index < -uchars_count) || (index >= uchars_count)) {
+		return boundaries;
+	    }
+	    const UChar *uchars = self->data.uchars;
+	    long offset;
+	    if (index < 0) {
+		// count the characters from the end
+		offset = uchars_count;
+		while ((offset > 0) && (index < 0)) {
+		    --offset;
+		    // if the next character is a paired surrogate
+		    // we need to go to the start of the whole surrogate
+		    if (U16_IS_TRAIL(uchars[offset]) && (offset > 0) && U16_IS_LEAD(uchars[offset-1])) {
+			--offset;
+		    }
+		    ++index;
+		}
+		// ended before the index got to 0
+		if (index != 0) {
+		    return boundaries;
+		}
+		assert(offset >= 0);
+	    }
+	    else {
+		// count the characters from the start
+		offset = 0;
+		U16_FWD_N(uchars, offset, uchars_count, index);
+		if (offset >= uchars_count) {
+		    return boundaries;
+		}
+	    }
+
+	    long length_in_bytes;
+	    if (U16_IS_LEAD(uchars[offset]) && (offset < uchars_count - 1) && (U16_IS_TRAIL(uchars[offset+1]))) {
+		// if it's a lead surrogate we must also copy the trail surrogate
+		length_in_bytes = UCHARS_TO_BYTES(2);
+	    }
+	    else {
+		length_in_bytes = UCHARS_TO_BYTES(1);
+	    }
+	    boundaries.start_offset_in_bytes = UCHARS_TO_BYTES(offset);
+	    boundaries.end_offset_in_bytes = boundaries.start_offset_in_bytes + length_in_bytes;
 	}
     }
-    else if (index >= len) {
-	return NULL;
+    else { // data in binary
+	if (self->encoding->single_byte_encoding) {
+	    if (index < 0) {
+		index += self->length_in_bytes;
+		if (index < 0) {
+		    return boundaries;
+		}
+	    }
+	    boundaries.start_offset_in_bytes = index;
+	    boundaries.end_offset_in_bytes = boundaries.start_offset_in_bytes + 1;
+	}
+	else if (UTF32_ENC(self->encoding) && (!ucs2_mode || str_known_not_to_have_any_supplementary(self))) {
+	    if (index < 0) {
+		index += div_round_up(self->length_in_bytes, 4);
+		if (index < 0) {
+		    return boundaries;
+		}
+	    }
+	    boundaries.start_offset_in_bytes = index * 4;
+	    boundaries.end_offset_in_bytes = boundaries.start_offset_in_bytes + 4;
+	}
+	else if (NON_NATIVE_UTF16_ENC(self->encoding) && (ucs2_mode || str_known_not_to_have_any_supplementary(self))) {
+	    if (index < 0) {
+		index += div_round_up(self->length_in_bytes, 2);
+		if (index < 0) {
+		    return boundaries;
+		}
+	    }
+	    boundaries.start_offset_in_bytes = UCHARS_TO_BYTES(index);
+	    boundaries.end_offset_in_bytes = boundaries.start_offset_in_bytes + 2;
+	}
+	else {
+	    if (index < 0) {
+		// calculating the length is slow but we don't have much choice
+		index += str_length(self, ucs2_mode);
+		if (index < 0) {
+		    return boundaries;
+		}
+	    }
+
+	    // the code has many similarities with str_length
+	    USE_CONVERTER(cnv, self);
+
+	    const char *pos = self->data.bytes;
+	    const char *end = pos + self->length_in_bytes;
+	    long current_index = 0;
+	    for (;;) {
+		const char *character_start_pos = pos;
+		// iterate through the string one Unicode code point at a time
+		// (we dont care what the character is or if it's valid or not)
+		UErrorCode err = U_ZERO_ERROR;
+		UChar32 c = ucnv_getNextUChar(cnv, &pos, end, &err);
+		if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
+		    // end of the string
+		    break;
+		}
+		long offset_in_bytes = character_start_pos - self->data.bytes;
+		long converted_width = pos - character_start_pos;
+		if (U_FAILURE(err)) {
+		    long min_char_size = self->encoding->min_char_size;
+		    // division of converted_width by min_char_size rounded up
+		    long diff = div_round_up(converted_width, min_char_size);
+		    long length_in_bytes;
+		    if (current_index == index) {
+			if (min_char_size > converted_width) {
+			    length_in_bytes = converted_width;
+			}
+			else {
+			    length_in_bytes = min_char_size;
+			}
+			boundaries.start_offset_in_bytes = offset_in_bytes;
+			boundaries.end_offset_in_bytes = boundaries.start_offset_in_bytes + length_in_bytes;
+			break;
+		    }
+		    else if (current_index + diff > index) {
+			long adjusted_offset = offset_in_bytes + (index - current_index) * min_char_size;
+			if (adjusted_offset + min_char_size > offset_in_bytes + converted_width) {
+			    length_in_bytes = offset_in_bytes + converted_width - adjusted_offset;
+			}
+			else {
+			    length_in_bytes = min_char_size;
+			}
+			boundaries.start_offset_in_bytes = adjusted_offset;
+			boundaries.end_offset_in_bytes = boundaries.start_offset_in_bytes + length_in_bytes;
+			break;
+		    }
+		    current_index += diff;
+		}
+		else {
+		    if (ucs2_mode && !U_IS_BMP(c)) {
+			// you cannot cut a surrogate in an encoding that is not UTF-16
+			if (current_index == index) {
+			    boundaries.start_offset_in_bytes = offset_in_bytes;
+			    break;
+			}
+			else if (current_index+1 == index) {
+			    boundaries.end_offset_in_bytes = offset_in_bytes + converted_width;
+			    break;
+			}
+			++current_index;
+		    }
+
+		    if (current_index == index) {
+			boundaries.start_offset_in_bytes = offset_in_bytes;
+			boundaries.end_offset_in_bytes = boundaries.start_offset_in_bytes + converted_width;
+			break;
+		    }
+
+		    ++current_index;
+		}
+	    }
+
+	    ucnv_close(cnv);
+	}
     }
 
-    // if the string is truncated we can have less data than the character's width
-    long offset_in_bytes = index * character_width;
-    if (offset_in_bytes + character_width > self->length_in_bytes) {
-	character_width = self->length_in_bytes - offset_in_bytes;
-    }
-    return str_new_copy_of_part(self, offset_in_bytes, character_width);
+    return boundaries;
 }
 
 static string_t *
@@ -1169,8 +1353,6 @@ str_get_characters(string_t *self, long start, long end, bool ucs2_mode)
     abort(); // TODO
 }
 
-// TODO: as get_characters and get_character_at are nearly the same,
-// make them one function (with a boolean indicating if it's only for 1 character)
 static string_t *
 str_get_character_at(string_t *self, long index, bool ucs2_mode)
 {
@@ -1178,156 +1360,33 @@ str_get_character_at(string_t *self, long index, bool ucs2_mode)
 	return NULL;
     }
     if (!self->encoding->single_byte_encoding && !str_is_stored_in_uchars(self)) {
+	// if we can't access the bytes directly,
+	// try to convert the string in UTF-16
 	str_try_making_data_uchars(self);
     }
-    if (str_is_stored_in_uchars(self)) {
-	if (ucs2_mode || str_known_not_to_have_any_supplementary(self)) {
-	    string_t *str = str_get_character_fixed_width(self, index, 2);
-	    if ((str != NULL) && U16_IS_SURROGATE(str->data.uchars[0])) {
-		if (!UTF16_ENC(str->encoding)) {
-		    // you can't cut a surrogate in an encoding that is not UTF-16
-		    // (it's in theory possible to store the surrogate in
-		    //  UTF-8 or UTF-32 but that would be incorrect Unicode)
-		    str_cannot_cut_surrogate();
-		}
-	    }
-	    return str;
+    character_boundaries_t boundaries = str_get_character_position(self, index, ucs2_mode);
+    if (boundaries.start_offset_in_bytes == -1) {
+	if (boundaries.end_offset_in_bytes == -1) {
+	    return NULL;
 	}
 	else {
-	    // we don't have the length of the string, just the number of UChars
-	    // (uchars_count >= number of characters)
-	    long uchars_count = BYTES_TO_UCHARS(self->length_in_bytes);
-	    if ((index < -uchars_count) || (index >= uchars_count)) {
-		return NULL;
-	    }
-	    const UChar *uchars = self->data.uchars;
-	    long offset;
-	    if (index < 0) {
-		// count the characters from the end
-		offset = uchars_count;
-		while ((offset > 0) && (index < 0)) {
-		    --offset;
-		    // if the next character is a paired surrogate
-		    // we need to go to the start of the whole surrogate
-		    if (U16_IS_TRAIL(uchars[offset]) && (offset > 0) && U16_IS_LEAD(uchars[offset-1])) {
-			--offset;
-		    }
-		    ++index;
-		}
-		// ended before the index got to 0
-		if (index != 0) {
-		    return NULL;
-		}
-		assert(offset >= 0);
-	    }
-	    else {
-		// count the characters from the start
-		offset = 0;
-		U16_FWD_N(uchars, offset, uchars_count, index);
-		if (offset >= uchars_count) {
-		    return NULL;
-		}
-	    }
-
-	    long length_in_bytes;
-	    if (U16_IS_LEAD(uchars[offset]) && (offset < uchars_count - 1) && (U16_IS_TRAIL(uchars[offset+1]))) {
-		// if it's a lead surrogate we must also copy the trail surrogate
-		length_in_bytes = UCHARS_TO_BYTES(2);
-	    }
-	    else {
-		length_in_bytes = UCHARS_TO_BYTES(1);
-	    }
-	    long offset_in_bytes = UCHARS_TO_BYTES(offset);
-	    return str_new_copy_of_part(self, offset_in_bytes, length_in_bytes);
+	    // you cannot cut a surrogate in an encoding that is not UTF-16
+	    str_cannot_cut_surrogate();
 	}
     }
-    else { // data in binary
-	if (self->encoding->single_byte_encoding) {
-	    return str_get_character_fixed_width(self, index, 1);
-	}
-	else if (!ucs2_mode && UTF32_ENC(self->encoding)) { // UTF-32 only in non UCS-2 mode
-	    return str_get_character_fixed_width(self, index, 4);
-	}
-	else if (NON_NATIVE_UTF16_ENC(self->encoding) && (ucs2_mode || str_known_not_to_have_any_supplementary(self))) {
-	    return str_get_character_fixed_width(self, index, 2);
-	}
-	else {
-	    if (index < 0) {
-		// calculating the length is slow but we don't have much choice
-		index += str_length(self, ucs2_mode);
-		if (index < 0) {
-		    return NULL;
-		}
-	    }
-
-	    // the code has many similarities with str_length
-	    USE_CONVERTER(cnv, self);
-
-	    const char *pos = self->data.bytes;
-	    const char *end = pos + self->length_in_bytes;
-	    long current_index = 0;
-	    for (;;) {
-		const char *character_start_pos = pos;
-		// iterate through the string one Unicode code point at a time
-		// (we dont care what the character is or if it's valid or not)
-		UErrorCode err = U_ZERO_ERROR;
-		UChar32 c = ucnv_getNextUChar(cnv, &pos, end, &err);
-		if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
-		    // end of the string
-		    ucnv_close(cnv);
-		    return NULL;
-		}
-		long offset_in_bytes = character_start_pos - self->data.bytes;
-		long converted_width = pos - character_start_pos;
-		if (U_FAILURE(err)) {
-		    long min_char_size = self->encoding->min_char_size;
-		    // division of converted_width by min_char_size rounded up
-		    long diff = div_round_up(converted_width, min_char_size);
-		    long length_in_bytes;
-		    if (current_index == index) {
-			if (min_char_size > converted_width) {
-			    length_in_bytes = converted_width;
-			}
-			else {
-			    length_in_bytes = min_char_size;
-			}
-			ucnv_close(cnv);
-			return str_new_copy_of_part(self, offset_in_bytes, length_in_bytes);
-		    }
-		    else if (current_index + diff > index) {
-			long adjusted_offset = offset_in_bytes + (index - current_index) * min_char_size;
-			if (adjusted_offset + min_char_size > offset_in_bytes + converted_width) {
-			    length_in_bytes = offset_in_bytes + converted_width - adjusted_offset;
-			}
-			else {
-			    length_in_bytes = min_char_size;
-			}
-			ucnv_close(cnv);
-			return str_new_copy_of_part(self, adjusted_offset, length_in_bytes);
-		    }
-		    current_index += diff;
-		}
-		else {
-		    if (ucs2_mode && !U_IS_BMP(c)) {
-			if (((current_index == index) || (current_index+1 == index))) {
-			    // you can't cut a surrogate in an encoding that is not UTF-16
-			    // (it's in theory possible to store the surrogate in
-			    //  UTF-8 or UTF-32 but that would be incorrect Unicode)
-			    str_cannot_cut_surrogate();
-			}
-			++current_index;
-		    }
-
-		    if (current_index == index) {
-			ucnv_close(cnv);
-			return str_new_copy_of_part(self, offset_in_bytes, converted_width);
-		    }
-
-		    ++current_index;
-		}
-	    }
-	}
+    else if (boundaries.end_offset_in_bytes == -1) {
+	// you cannot cut a surrogate in an encoding that is not UTF-16
+	str_cannot_cut_surrogate();
     }
+
+    if (boundaries.start_offset_in_bytes >= self->length_in_bytes) {
+	return NULL;
+    }
+    if (boundaries.end_offset_in_bytes >= self->length_in_bytes) {
+	boundaries.end_offset_in_bytes = self->length_in_bytes;
+    }
+
+    return str_new_copy_of_part(self, boundaries.start_offset_in_bytes, boundaries.end_offset_in_bytes - boundaries.start_offset_in_bytes);
 }
 
 static string_t *
