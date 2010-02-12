@@ -8,14 +8,11 @@
  * Copyright (C) 2000 Network Applied Communication Laboratory, Inc.
  * Copyright (C) 2000 Information-technology Promotion Agency, Japan
  */
-#include "unicode/ustring.h"
-#include "ruby.h"
+#include "encoding.h"
 #include "objc.h"
-#include <stdbool.h>
 #include <assert.h>
 #include <stdio.h>
 #include <stdarg.h>
-#include <string.h>
 
 #define OBJC_CLASS(x) (*(VALUE *)(x))
 
@@ -196,19 +193,24 @@ str_alloc(void)
     return str;
 }
 
-static VALUE
-mr_str_s_alloc(VALUE klass)
-{
-    return (VALUE)str_alloc();
-}
-
-
 extern VALUE rb_cString;
 extern VALUE rb_cCFString;
 extern VALUE rb_cNSString;
 extern VALUE rb_cNSMutableString;
 extern VALUE rb_cSymbol;
 extern VALUE rb_cByteString;
+
+static void
+str_replace_with_string(string_t *self, string_t *str)
+{
+    self->encoding = str->encoding;
+    self->capacity_in_bytes = self->length_in_bytes = str->length_in_bytes;
+    self->flags = str->flags;
+    if (self->length_in_bytes != 0) {
+	GC_WB(&self->data.bytes, xmalloc(self->length_in_bytes));
+	memcpy(self->data.bytes, str->data.bytes, self->length_in_bytes);
+    }
+}
 
 static void
 str_replace(string_t *self, VALUE arg)
@@ -237,14 +239,7 @@ str_replace(string_t *self, VALUE arg)
 	}
     }
     else if (klass == rb_cMRString) {
-	string_t *str = STR(arg);
-	self->encoding = str->encoding;
-	self->capacity_in_bytes = self->length_in_bytes = str->length_in_bytes;
-	self->flags = str->flags;
-	if (self->length_in_bytes != 0) {
-	    GC_WB(&self->data.bytes, xmalloc(self->length_in_bytes));
-	    memcpy(self->data.bytes, str->data.bytes, self->length_in_bytes);
-	}
+	str_replace_with_string(self, STR(arg));
     }
     else if (klass == rb_cSymbol) {
 	abort(); // TODO
@@ -277,31 +272,6 @@ str_make_data_binary(string_t *self)
     }
 
     self->encoding->methods.make_data_binary(self);
-}
-
-static long
-utf16_bytesize_approximation(encoding_t *enc, int bytesize)
-{
-    long approximation;
-    if (UTF16_ENC(enc)) {
-	approximation = bytesize; // the bytesize in UTF-16 is the same whatever the endianness
-    }
-    else if (UTF32_ENC(enc)) {
-	// the bytesize in UTF-16 is nearly half of the bytesize in UTF-32
-	// (if there characters not in the BMP it's a bit more though)
-	approximation = bytesize / 2;
-    }
-    else {
-	// take a quite large size to not have to reallocate
-	approximation = bytesize * 2;
-    }
-
-    if (ODD_NUMBER(approximation)) {
-	// the size must be an even number
-	++approximation;
-    }
-
-    return approximation;
 }
 
 static bool
@@ -359,21 +329,14 @@ str_length(string_t *self, bool ucs2_mode)
 	    return self->length_in_bytes;
 	}
 	else if (ucs2_mode && NON_NATIVE_UTF16_ENC(self->encoding)) {
-	    long length = BYTES_TO_UCHARS(self->length_in_bytes);
-	    if (ODD_NUMBER(self->length_in_bytes)) {
-		return length + 1;
-	    }
-	    else {
-		return length;
-	    }
+	    return div_round_up(self->length_in_bytes, 2);
 	}
 	else {
-	    return self->encoding->methods.length(self);
+	    return self->encoding->methods.length(self, ucs2_mode);
 	}
     }
 }
 
-#define STACK_BUFFER_SIZE 1024
 static long
 str_bytesize(string_t *self)
 {
@@ -602,7 +565,7 @@ str_get_character_boundaries(string_t *self, long index, bool ucs2_mode)
 	    boundaries.end_offset_in_bytes = boundaries.start_offset_in_bytes + 2;
 	}
 	else {
-	    return self->encoding->methods.get_character_boundaries(self, index, ucs2_mode);
+	    boundaries = self->encoding->methods.get_character_boundaries(self, index, ucs2_mode);
 	}
     }
 
@@ -736,7 +699,7 @@ str_concat_string(string_t *self, string_t *str)
 	return;
     }
     if (self->length_in_bytes == 0) {
-	str_replace(self, (VALUE)str);
+	str_replace_with_string(self, str);
 	return;
     }
 
@@ -822,7 +785,7 @@ str_is_equal_to_string(string_t *self, string_t *str)
 //----------------------------------------------
 // Functions called by MacRuby
 
-static VALUE
+VALUE
 mr_enc_s_is_compatible(VALUE klass, SEL sel, VALUE str1, VALUE str2)
 {
     assert(!SPECIAL_CONST_P(str1) && (OBJC_CLASS(str1) == rb_cMRString));
@@ -834,6 +797,13 @@ mr_enc_s_is_compatible(VALUE klass, SEL sel, VALUE str1, VALUE str2)
     else {
 	return (VALUE)encoding;
     }
+}
+
+
+static VALUE
+mr_str_s_alloc(VALUE klass)
+{
+    return (VALUE)str_alloc();
 }
 
 
@@ -1086,6 +1056,8 @@ Init_MRString(void)
     // this method does not exist in Ruby and is there only for debugging purpose
     rb_objc_define_method(rb_cMRString, "stored_in_uchars?", mr_str_is_stored_in_uchars, 0);
 }
+
+void Init_MREncoding(void);
 
 void
 Init_new_string(void)

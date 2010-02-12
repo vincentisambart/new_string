@@ -2,3 +2,4 @@ Makefile
 *.o
 *.bundle
 .*.swp
+.DS_Store

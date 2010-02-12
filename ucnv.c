@@ -88,6 +88,31 @@ str_ucnv_make_data_binary(string_t *self)
     GC_WB(&self->data.bytes, buffer);
 }
 
+static long
+utf16_bytesize_approximation(encoding_t *enc, int bytesize)
+{
+    long approximation;
+    if (UTF16_ENC(enc)) {
+	approximation = bytesize; // the bytesize in UTF-16 is the same whatever the endianness
+    }
+    else if (UTF32_ENC(enc)) {
+	// the bytesize in UTF-16 is nearly half of the bytesize in UTF-32
+	// (if there characters not in the BMP it's a bit more though)
+	approximation = bytesize / 2;
+    }
+    else {
+	// take a quite large size to not have to reallocate
+	approximation = bytesize * 2;
+    }
+
+    if (ODD_NUMBER(approximation)) {
+	// the size must be an even number
+	++approximation;
+    }
+
+    return approximation;
+}
+
 static bool
 str_ucnv_try_making_data_uchars(string_t *self)
 {
@@ -135,7 +160,7 @@ str_ucnv_try_making_data_uchars(string_t *self)
 }
 
 static long
-str_ucnv_length(string_t *self)
+str_ucnv_length(string_t *self, bool ucs2_mode)
 {
     assert(!str_is_stored_in_uchars(self));
 
@@ -177,6 +202,7 @@ str_ucnv_length(string_t *self)
     return len;
 }
 
+#define STACK_BUFFER_SIZE 1024
 static long
 str_ucnv_bytesize(string_t *self)
 {
@@ -214,9 +240,11 @@ str_ucnv_get_character_boundaries(string_t *self, long index, bool ucs2_mode)
 {
     assert(!str_is_stored_in_uchars(self));
 
+    character_boundaries_t boundaries = {-1, -1};
+
     if (index < 0) {
 	// calculating the length is slow but we don't have much choice
-	index += str_length(self, ucs2_mode);
+	index += str_ucnv_length(self, ucs2_mode);
 	if (index < 0) {
 	    return boundaries;
 	}
@@ -295,6 +323,8 @@ str_ucnv_get_character_boundaries(string_t *self, long index, bool ucs2_mode)
     }
 
     ucnv_close(cnv);
+
+    return boundaries;
 }
 
 void
@@ -302,9 +332,9 @@ enc_init_ucnv_encoding(encoding_t *encoding)
 {
     // create the ICU converter
     UErrorCode err = U_ZERO_ERROR;
-    UConverter *converter = ucnv_open(public_name, &err);
+    UConverter *converter = ucnv_open(encoding->public_name, &err);
     if (!U_SUCCESS(err) || (converter == NULL)) {
-	fprintf(stderr, "Couldn't create the encoder for %s\n", public_name);
+	fprintf(stderr, "Couldn't create the encoder for %s\n", encoding->public_name);
 	abort();
     }
     // stop the conversion when the conversion failed
@@ -313,16 +343,8 @@ enc_init_ucnv_encoding(encoding_t *encoding)
     err = U_ZERO_ERROR;
     ucnv_setFromUCallBack(converter, UCNV_FROM_U_CALLBACK_STOP, NULL, NULL, NULL, &err);
 
-    // fill the fields
-    encoding->index = encoding_index;
-    encoding->public_name = public_name;
-    encoding->min_char_size = min_char_size;
-    encoding->single_byte_encoding = single_byte_encoding;
-    encoding->ascii_compatible = ascii_compatible;
-    encoding->aliases_count = aliases_count;
-    encoding->aliases = aliases;
+    // fill the fields not filled yet
     encoding->private_data = converter;
-
     encoding->methods.update_flags = str_ucnv_update_flags;
     encoding->methods.make_data_binary = str_ucnv_make_data_binary;
     encoding->methods.try_making_data_uchars = str_ucnv_try_making_data_uchars;

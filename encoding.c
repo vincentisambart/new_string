@@ -1,4 +1,5 @@
 #include "encoding.h"
+#include <string.h>
 
 // TODO:
 // - use rb_usascii_str_new_cstr instead of rb_str_new2
@@ -6,17 +7,18 @@
 VALUE rb_cMREncoding = 0;
 
 #define ENC(x) ((encoding_t *)(x))
+#define OBJC_CLASS(x) (*(VALUE *)(x))
 
 encoding_t *default_internal = NULL;
 encoding_t *default_external = NULL;
 encoding_t *encodings[ENCODINGS_COUNT];
 
-static void str_undefined_update_flags(string_t *) { abort(); }
-static void str_undefined_make_data_binary(string_t *) { abort(); }
-static bool str_undefined_try_making_data_uchars(string_t *) { abort(); }
-static long str_undefined_length(string_t *) { abort(); }
-static long str_undefined_bytesize(string_t *) { abort(); }
-static character_boundaries_t str_undefined_get_character_boundaries(string_t *, long, bool) { abort(); }
+static void str_undefined_update_flags(string_t *self) { abort(); }
+static void str_undefined_make_data_binary(string_t *self) { abort(); }
+static bool str_undefined_try_making_data_uchars(string_t *self) { abort(); }
+static long str_undefined_length(string_t *self, bool ucs2_mode) { abort(); }
+static long str_undefined_bytesize(string_t *self) { abort(); }
+static character_boundaries_t str_undefined_get_character_boundaries(string_t *self, long index, bool ucs2_mode) { abort(); }
 
 static VALUE
 mr_enc_s_list(VALUE klass, SEL sel)
@@ -182,7 +184,6 @@ add_encoding(
     encoding->ascii_compatible = ascii_compatible;
     encoding->aliases_count = aliases_count;
     encoding->aliases = aliases;
-    encoding->converter = converter;
 
     // fill the default implementations with aborts
     encoding->methods.update_flags = str_undefined_update_flags;
@@ -229,7 +230,7 @@ create_encodings(void)
     default_internal = encodings[ENCODING_UTF16_NATIVE];
 }
 
-static VALUE
+VALUE
 mr_enc_s_is_compatible(VALUE klass, SEL sel, VALUE str1, VALUE str2);
 
 void
