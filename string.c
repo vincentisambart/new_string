@@ -9,7 +9,6 @@
  * Copyright (C) 2000 Information-technology Promotion Agency, Japan
  */
 #include "unicode/ustring.h"
-#include "unicode/ucnv.h"
 #include "ruby.h"
 #include "objc.h"
 #include <stdbool.h>
@@ -20,467 +19,7 @@
 
 #define OBJC_CLASS(x) (*(VALUE *)(x))
 
-// TODO:
-// - use rb_usascii_str_new_cstr instead of rb_str_new2
-
-VALUE rb_cMREncoding;
-
-typedef struct {
-    struct RBasic basic;
-    unsigned int index;
-    const char *public_name;
-    const char **aliases;
-    unsigned int aliases_count;
-    unsigned char min_char_size;
-    bool single_byte_encoding : 1;
-    bool ascii_compatible : 1;
-    UConverter *converter;
-} encoding_t;
-
-#define ENC(x) ((encoding_t *)(x))
-
-encoding_t *default_internal = NULL;
-encoding_t *default_external = NULL;
-
-enum {
-    ENCODING_BINARY = 0,
-    ENCODING_ASCII,
-    ENCODING_UTF8,
-    ENCODING_UTF16BE,
-    ENCODING_UTF16LE,
-    ENCODING_UTF32BE,
-    ENCODING_UTF32LE,
-    ENCODING_ISO8859_1,
-    //ENCODING_EUCJP,
-    //ENCODING_SJIS,
-    //ENCODING_CP932,
-
-    ENCODINGS_COUNT
-};
-
-#if __LITTLE_ENDIAN__
-#define ENCODING_UTF16_NATIVE ENCODING_UTF16LE
-#define ENCODING_UTF32_NATIVE ENCODING_UTF32LE
-#define ENCODING_UTF16_NON_NATIVE ENCODING_UTF16BE
-#define ENCODING_UTF32_NON_NATIVE ENCODING_UTF32BE
-#else
-#define ENCODING_UTF16_NATIVE ENCODING_UTF16BE
-#define ENCODING_UTF32_NATIVE ENCODING_UTF32BE
-#define ENCODING_UTF16_NON_NATIVE ENCODING_UTF16LE
-#define ENCODING_UTF32_NON_NATIVE ENCODING_UTF32LE
-#endif
-
-static encoding_t *encodings[ENCODINGS_COUNT];
-
-#define NATIVE_UTF16_ENC(enc) ((enc) == encodings[ENCODING_UTF16_NATIVE])
-#define NON_NATIVE_UTF16_ENC(enc) ((enc) == encodings[ENCODING_UTF16_NON_NATIVE])
-#define UTF16_ENC(enc) (NATIVE_UTF16_ENC(enc) || NON_NATIVE_UTF16_ENC(enc))
-#define NATIVE_UTF32_ENC(enc) ((enc) == encodings[ENCODING_UTF32_NATIVE])
-#define NON_NATIVE_UTF32_ENC(enc) ((enc) == encodings[ENCODING_UTF32_NON_NATIVE])
-#define UTF32_ENC(enc) (NATIVE_UTF32_ENC(enc) || NON_NATIVE_UTF32_ENC(enc))
-#define BINARY_ENC(enc) ((enc) == encodings[ENCODING_BINARY])
-
-static VALUE
-mr_enc_s_list(VALUE klass, SEL sel)
-{
-    VALUE ary = rb_ary_new2(ENCODINGS_COUNT);
-    for (unsigned int i = 0; i < ENCODINGS_COUNT; ++i) {
-	rb_ary_push(ary, (VALUE)encodings[i]);
-    }
-    return ary;
-}
-
-static VALUE
-mr_enc_s_name_list(VALUE klass, SEL sel)
-{
-    VALUE ary = rb_ary_new();
-    for (unsigned int i = 0; i < ENCODINGS_COUNT; ++i) {
-	encoding_t *enc = ENC(encodings[i]);
-	// TODO: use US-ASCII strings
-	rb_ary_push(ary, rb_str_new2(enc->public_name));
-	for (unsigned int j = 0; j < enc->aliases_count; ++j) {
-	    rb_ary_push(ary, rb_str_new2(enc->aliases[j]));
-	}
-    }
-    return ary;
-}
-
-static VALUE
-mr_enc_s_aliases(VALUE klass, SEL sel)
-{
-    VALUE hash = rb_hash_new();
-    for (unsigned int i = 0; i < ENCODINGS_COUNT; ++i) {
-	encoding_t *enc = ENC(encodings[i]);
-	for (unsigned int j = 0; j < enc->aliases_count; ++j) {
-	    rb_hash_aset(hash,
-		    rb_str_new2(enc->aliases[j]),
-		    rb_str_new2(enc->public_name));
-	}
-    }
-    return hash;
-}
-
-static VALUE
-mr_enc_s_default_internal(VALUE klass, SEL sel)
-{
-    return (VALUE)default_internal;
-}
-
-static VALUE
-mr_enc_s_default_external(VALUE klass, SEL sel)
-{
-    return (VALUE)default_external;
-}
-
-static VALUE
-mr_enc_name(VALUE self, SEL sel)
-{
-    return rb_str_new2(ENC(self)->public_name);
-}
-
-static VALUE
-mr_enc_inspect(VALUE self, SEL sel)
-{
-    return rb_sprintf("#<%s:%s>", rb_obj_classname(self), ENC(self)->public_name);
-}
-
-static VALUE
-mr_enc_names(VALUE self, SEL sel)
-{
-    encoding_t *encoding = ENC(self);
-
-    VALUE ary = rb_ary_new2(encoding->aliases_count + 1);
-    rb_ary_push(ary, rb_str_new2(encoding->public_name));
-    for (unsigned int i = 0; i < encoding->aliases_count; ++i) {
-	rb_ary_push(ary, rb_str_new2(encoding->aliases[i]));
-    }
-    return ary;
-}
-
-static VALUE
-mr_enc_ascii_compatible_p(VALUE self, SEL sel)
-{
-    return ENC(self)->ascii_compatible ? Qtrue : Qfalse;
-}
-
-static VALUE
-mr_enc_dummy_p(VALUE self, SEL sel)
-{
-    return Qfalse;
-}
-
-static void
-define_encoding_constant(const char *name, encoding_t *enc)
-{
-    char c = name[0];
-    if ((c >= '0') && (c <= '9')) {
-	// constants can't start with a number
-	return;
-    }
-
-    char *name_copy = strdup(name);
-    if ((c >= 'a') && (c <= 'z')) {
-	// the first character must be upper case
-	name_copy[0] = c - ('a' - 'A');
-    }
-
-    // '.' and '-' must be transformed into '_'
-    for (int i = 0; name_copy[i]; ++i) {
-	if ((name_copy[i] == '.') || (name_copy[i] == '-')) {
-	    name_copy[i] = '_';
-	}
-    }
-    rb_define_const(rb_cMREncoding, name_copy, (VALUE)enc);
-    free(name_copy);
-}
-
-static void
-add_encoding(
-	unsigned int encoding_index, // index of the encoding in the encodings array
-	const char *public_name, // public name for the encoding
-	unsigned char min_char_size,
-	bool single_byte_encoding, // in the encoding a character takes only one byte
-	bool ascii_compatible, // is the encoding ASCII compatible or not
-	... // aliases for the encoding (should no include the public name) - must end with a NULL
-	)
-{
-    assert(encoding_index < ENCODINGS_COUNT);
-
-    // create an array for the aliases
-    unsigned int aliases_count = 0;
-    va_list va_aliases;
-    va_start(va_aliases, ascii_compatible);
-    while (va_arg(va_aliases, const char *) != NULL) {
-	++aliases_count;
-    }
-    va_end(va_aliases);
-    const char **aliases = (const char **) malloc(sizeof(const char *) * aliases_count);
-    va_start(va_aliases, ascii_compatible);
-    for (unsigned int i = 0; i < aliases_count; ++i) {
-	aliases[i] = va_arg(va_aliases, const char *);
-    }
-    va_end(va_aliases);
-
-    // create the ICU converter
-    UConverter *converter;
-    if (encoding_index == ENCODING_BINARY) {
-	converter = NULL; // no converter for binary
-    }
-    else {
-	UErrorCode err = U_ZERO_ERROR;
-	converter = ucnv_open(public_name, &err);
-	if (!U_SUCCESS(err) || (converter == NULL)) {
-	    fprintf(stderr, "Couldn't create the encoder for %s\n", public_name);
-	    abort();
-	}
-	// stop the conversion when the conversion failed
-	err = U_ZERO_ERROR;
-	ucnv_setToUCallBack(converter, UCNV_TO_U_CALLBACK_STOP, NULL, NULL, NULL, &err);
-	err = U_ZERO_ERROR;
-	ucnv_setFromUCallBack(converter, UCNV_FROM_U_CALLBACK_STOP, NULL, NULL, NULL, &err);
-    }
-
-    // create the MacRuby object
-    NEWOBJ(enc, encoding_t);
-    enc->basic.flags = 0;
-    enc->basic.klass = rb_cMREncoding;
-    encodings[encoding_index] = enc;
-    rb_objc_retain(enc); // it should never be deallocated
-
-    // fill the fields
-    enc->index = encoding_index;
-    enc->public_name = public_name;
-    enc->min_char_size = min_char_size;
-    enc->single_byte_encoding = single_byte_encoding;
-    enc->ascii_compatible = ascii_compatible;
-    enc->aliases_count = aliases_count;
-    enc->aliases = aliases;
-    enc->converter = converter;
-
-    // create constants
-    define_encoding_constant(public_name, enc);
-    for (unsigned int i = 0; i < aliases_count; ++i) {
-	define_encoding_constant(aliases[i], enc);
-    }
-}
-
-static void
-create_encodings(void)
-{
-    add_encoding(ENCODING_BINARY,    "ASCII-8BIT",  1, true,  true,  "BINARY", NULL);
-    add_encoding(ENCODING_ASCII,     "US-ASCII",    1, true,  true,  "ASCII", "ANSI_X3.4-1968", "646", NULL);
-    add_encoding(ENCODING_UTF8,      "UTF-8",       1, false, true,  "CP65001", NULL);
-    add_encoding(ENCODING_UTF16BE,   "UTF-16BE",    2, false, false, NULL);
-    add_encoding(ENCODING_UTF16LE,   "UTF-16LE",    2, false, false, NULL);
-    add_encoding(ENCODING_UTF32BE,   "UTF-32BE",    4, false, false, "UCS-4BE", NULL);
-    add_encoding(ENCODING_UTF32LE,   "UTF-32LE",    4, false, false, "UCS-4LE", NULL);
-    add_encoding(ENCODING_ISO8859_1, "ISO-8859-1",  1, true,  true,  "ISO8859-1", NULL);
-    // FIXME: the ICU conversion tables do not seem to match Ruby's Japanese conversion tables
-    //add_encoding(ENCODING_EUCJP,     "EUC-JP",      1, false, true,  "eucJP", NULL);
-    //add_encoding(ENCODING_SJIS,      "Shift_JIS",   1, false, true, "SJIS", NULL);
-    //add_encoding(ENCODING_CP932,     "Windows-31J", 1, false, true, "CP932", "csWindows31J", NULL);
-
-    default_external = encodings[ENCODING_UTF8];
-    default_internal = encodings[ENCODING_UTF16_NATIVE];
-}
-
-static VALUE
-mr_enc_s_is_compatible(VALUE klass, SEL sel, VALUE str1, VALUE str2);
-
-void
-Init_MREncoding(void)
-{
-    rb_cMREncoding = rb_define_class("MREncoding", rb_cObject);
-    rb_undef_alloc_func(rb_cMREncoding);
-
-    rb_objc_define_method(rb_cMREncoding, "to_s", mr_enc_name, 0);
-    rb_objc_define_method(rb_cMREncoding, "inspect", mr_enc_inspect, 0);
-    rb_objc_define_method(rb_cMREncoding, "name", mr_enc_name, 0);
-    rb_objc_define_method(rb_cMREncoding, "names", mr_enc_names, 0);
-    rb_objc_define_method(rb_cMREncoding, "dummy?", mr_enc_dummy_p, 0);
-    rb_objc_define_method(rb_cMREncoding, "ascii_compatible?", mr_enc_ascii_compatible_p, 0);
-    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "list", mr_enc_s_list, 0);
-    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "name_list", mr_enc_s_name_list, 0);
-    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "aliases", mr_enc_s_aliases, 0);
-    //rb_define_singleton_method(rb_cMREncoding, "find", enc_find, 1);
-    // it's defined on Encoding, but it requires String's internals so it's defined with String
-    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "compatible?", mr_enc_s_is_compatible, 2);
-
-    //rb_define_method(rb_cEncoding, "_dump", enc_dump, -1);
-    //rb_define_singleton_method(rb_cEncoding, "_load", enc_load, 1);
-
-    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "default_external", mr_enc_s_default_external, 0);
-    //rb_define_singleton_method(rb_cMREncoding, "default_external=", set_default_external, 1);
-    rb_objc_define_method(OBJC_CLASS(rb_cMREncoding), "default_internal", mr_enc_s_default_internal, 0);
-    //rb_define_singleton_method(rb_cMREncoding, "default_internal=", set_default_internal, 1);
-    //rb_define_singleton_method(rb_cMREncoding, "locale_charmap", rb_locale_charmap, 0);
-
-    create_encodings();
-}
-
-//--------------------- strings ----------------------------
-
 VALUE rb_cMRString;
-
-typedef uint8_t str_flag_t;
-
-typedef struct {
-    struct RBasic basic;
-    encoding_t *encoding;
-    long capacity_in_bytes;
-    long length_in_bytes;
-    union {
-	char *bytes;
-	UChar *uchars;
-    } data;
-    str_flag_t flags;
-} string_t;
-
-#define STRING_HAS_SUPPLEMENTARY     0x020
-#define STRING_HAS_SUPPLEMENTARY_SET 0x010
-#define STRING_ASCII_ONLY            0x008
-#define STRING_ASCII_ONLY_SET        0x010
-#define STRING_ASCII_ONLY            0x008
-#define STRING_VALID_ENCODING_SET    0x004
-#define STRING_VALID_ENCODING        0x002
-#define STRING_STORED_IN_UCHARS      0x001
-
-#define STRING_REQUIRED_FLAGS STRING_STORED_IN_UCHARS
-
-#define STR(x) ((string_t *)(x))
-
-#define BYTES_TO_UCHARS(len) ((len) / sizeof(UChar))
-#define UCHARS_TO_BYTES(len) ((len) * sizeof(UChar))
-
-#define ODD_NUMBER(x) ((x) & 0x1)
-
-static long
-div_round_up(long a, long b)
-{
-    return ((a) + (b - 1)) / b;
-}
-
-// do not forget to close the converter
-// before leaving the function
-#define USE_CONVERTER(cnv, str) \
-    assert(str->encoding->converter != NULL); \
-    char cnv##_buffer[U_CNV_SAFECLONE_BUFFERSIZE]; \
-    UErrorCode cnv##_err = U_ZERO_ERROR; \
-    int32_t cnv##_buffer_size = U_CNV_SAFECLONE_BUFFERSIZE; \
-    UConverter *cnv = ucnv_safeClone( \
-	    str->encoding->converter, \
-	    cnv##_buffer, \
-	    &cnv##_buffer_size, \
-	    &cnv##_err \
-	); \
-    ucnv_reset(cnv);
-
-static void
-str_update_flags(string_t *self);
-
-static void
-str_unset_facultative_flags(string_t *self)
-{
-    self->flags &= ~STRING_HAS_SUPPLEMENTARY_SET & ~STRING_ASCII_ONLY_SET & ~STRING_VALID_ENCODING_SET;
-}
-
-static bool
-str_known_to_have_an_invalid_encoding(string_t *self)
-{
-    return (self->flags & (STRING_VALID_ENCODING_SET | STRING_VALID_ENCODING)) == STRING_VALID_ENCODING_SET;
-}
-
-static bool
-str_known_not_to_have_any_supplementary(string_t *self)
-{
-    return (self->flags & (STRING_HAS_SUPPLEMENTARY_SET | STRING_HAS_SUPPLEMENTARY)) == STRING_HAS_SUPPLEMENTARY_SET;
-}
-
-static bool
-str_check_flag_and_update_if_needed(string_t *self, str_flag_t flag_set, str_flag_t flag)
-{
-    if (!(self->flags & flag_set)) {
-	str_update_flags(self);
-	assert(self->flags & flag_set);
-    }
-    return self->flags & flag;
-}
-
-static bool
-str_is_valid_encoding(string_t *self)
-{
-    return str_check_flag_and_update_if_needed(self, STRING_VALID_ENCODING_SET, STRING_VALID_ENCODING);
-}
-
-static bool
-str_is_ascii_only(string_t *self)
-{
-    return str_check_flag_and_update_if_needed(self, STRING_ASCII_ONLY_SET, STRING_ASCII_ONLY);
-}
-
-static bool
-str_is_ruby_ascii_only(string_t *self)
-{
-    // for MRI, a string in a non-ASCII-compatible encoding (like UTF-16)
-    // containing only ASCII characters is not "ASCII only" though for us it is internally
-    if (!self->encoding->ascii_compatible) {
-	return false;
-    }
-
-    return str_is_ascii_only(self);
-}
-
-static bool
-str_is_stored_in_uchars(string_t *self)
-{
-    return self->flags & STRING_STORED_IN_UCHARS;
-}
-
-static void
-str_negate_stored_in_uchars(string_t *self)
-{
-    self->flags ^= STRING_STORED_IN_UCHARS;
-}
-
-static void
-str_set_stored_in_uchars(string_t *self, bool status)
-{
-    if (status) {
-	self->flags |= STRING_STORED_IN_UCHARS;
-    }
-    else {
-	self->flags &= ~STRING_STORED_IN_UCHARS;
-    }
-}
-
-static void
-str_set_facultative_flag(string_t *self, bool status, str_flag_t flag_set, str_flag_t flag)
-{
-    if (status) {
-	self->flags = self->flags | flag_set | flag;
-    }
-    else {
-	self->flags = (self->flags | flag_set) & ~flag;
-    }
-}
-
-static void
-str_set_has_supplementary(string_t *self, bool status)
-{
-    str_set_facultative_flag(self, status, STRING_HAS_SUPPLEMENTARY_SET, STRING_HAS_SUPPLEMENTARY);
-}
-
-static void
-str_set_ascii_only(string_t *self, bool status)
-{
-    str_set_facultative_flag(self, status, STRING_ASCII_ONLY_SET, STRING_ASCII_ONLY);
-}
-
-static void
-str_set_valid_encoding(string_t *self, bool status)
-{
-    str_set_facultative_flag(self, status, STRING_VALID_ENCODING_SET, STRING_VALID_ENCODING);
-}
 
 static void
 str_update_flags_utf16(string_t *self)
@@ -562,7 +101,7 @@ str_update_flags_utf16(string_t *self)
     }
 }
 
-static void
+void
 str_update_flags(string_t *self)
 {
     if (self->length_in_bytes == 0) {
@@ -586,44 +125,7 @@ str_update_flags(string_t *self)
 	str_update_flags_utf16(self);
     }
     else {
-	USE_CONVERTER(cnv, self);
-
-	bool ascii_only = true;
-	bool valid_encoding = true;
-	bool has_supplementary = false;
-
-	const char *pos = self->data.bytes;
-	const char *end = pos + self->length_in_bytes;
-	for (;;) {
-	    // iterate through the string one Unicode code point at a time
-	    UErrorCode err = U_ZERO_ERROR;
-	    UChar32 c = ucnv_getNextUChar(cnv, &pos, end, &err);
-	    if (U_FAILURE(err)) {
-		if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
-		    // end of the string
-		    break;
-		}
-		else {
-		    // conversion error
-		    valid_encoding = false;
-		    ascii_only = false;
-		}
-	    }
-	    else {
-		if (c > 127) {
-		    ascii_only = false;
-		    if (U_IS_SUPPLEMENTARY(c)) {
-			has_supplementary = true;
-		    }
-		}
-	    }
-	}
-
-	ucnv_close(cnv);
-
-	str_set_has_supplementary(self, has_supplementary);
-	str_set_valid_encoding(self, valid_encoding);
-	str_set_ascii_only(self, ascii_only);
+	self->encoding->methods.update_flags(self);
     }
 }
 
@@ -646,7 +148,6 @@ str_invert_byte_order(string_t *self)
     }
     str_negate_stored_in_uchars(self);
 }
-
 
 static encoding_t *
 str_compatible_encoding(string_t *str1, string_t *str2)
@@ -775,26 +276,7 @@ str_make_data_binary(string_t *self)
 	return;
     }
 
-    USE_CONVERTER(cnv, self);
-
-    UErrorCode err = U_ZERO_ERROR;
-    long capa = UCNV_GET_MAX_BYTES_FOR_STRING(BYTES_TO_UCHARS(self->length_in_bytes), ucnv_getMaxCharSize(cnv));
-    char *buffer = xmalloc(capa);
-    const UChar *source_pos = self->data.uchars;
-    const UChar *source_end = self->data.uchars + BYTES_TO_UCHARS(self->length_in_bytes);
-    char *target_pos = buffer;
-    char *target_end = buffer + capa;
-    ucnv_fromUnicode(cnv, &target_pos, target_end, &source_pos, source_end, NULL, true, &err);
-    // there should never be any conversion error here
-    // (if there's one it means some checking has been forgotten before)
-    assert(U_SUCCESS(err));
-
-    ucnv_close(cnv);
-
-    str_set_stored_in_uchars(self, false);
-    self->capacity_in_bytes = capa;
-    self->length_in_bytes = target_pos - buffer;
-    GC_WB(&self->data.bytes, buffer);
+    self->encoding->methods.make_data_binary(self);
 }
 
 static long
@@ -845,45 +327,7 @@ str_try_making_data_uchars(string_t *self)
 	return false;
     }
 
-    USE_CONVERTER(cnv, self);
-
-    long capa = utf16_bytesize_approximation(self->encoding, self->length_in_bytes);
-    const char *source_pos = self->data.bytes;
-    const char *source_end = self->data.bytes + self->length_in_bytes;
-    UChar *buffer = xmalloc(capa);
-    UChar *target_pos = buffer;
-    UErrorCode err = U_ZERO_ERROR;
-    for (;;) {
-	UChar *target_end = buffer + BYTES_TO_UCHARS(capa);
-	err = U_ZERO_ERROR;
-	ucnv_toUnicode(cnv, &target_pos, target_end, &source_pos, source_end, NULL, true, &err);
-	if (err == U_BUFFER_OVERFLOW_ERROR) {
-	    long index = target_pos - buffer;
-	    capa *= 2; // double the buffer's size
-	    buffer = xrealloc(buffer, capa);
-	    target_pos = buffer + index;
-	}
-	else {
-	    break;
-	}
-    }
-
-    ucnv_close(cnv);
-
-    if (U_SUCCESS(err)) {
-	str_set_valid_encoding(self, true);
-	str_set_stored_in_uchars(self, true);
-	self->capacity_in_bytes = capa;
-	self->length_in_bytes = UCHARS_TO_BYTES(target_pos - buffer);
-	GC_WB(&self->data.uchars, buffer);
-
-	return true;
-    }
-    else {
-	str_set_valid_encoding(self, false);
-
-	return false;
-    }
+    return self->encoding->methods.try_making_data_uchars(self);
 }
 
 static long
@@ -924,42 +368,7 @@ str_length(string_t *self, bool ucs2_mode)
 	    }
 	}
 	else {
-	    USE_CONVERTER(cnv, self);
-
-	    const char *pos = self->data.bytes;
-	    const char *end = pos + self->length_in_bytes;
-	    long len = 0;
-	    bool valid_encoding = true;
-	    for (;;) {
-		const char *character_start_pos = pos;
-		// iterate through the string one Unicode code point at a time
-		UErrorCode err = U_ZERO_ERROR;
-		UChar32 c = ucnv_getNextUChar(cnv, &pos, end, &err);
-		if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
-		    // end of the string
-		    break;
-		}
-		else if (U_FAILURE(err)) {
-		    valid_encoding = false;
-		    long min_char_size = self->encoding->min_char_size;
-		    long converted_width = pos - character_start_pos;
-		    len += div_round_up(converted_width, min_char_size);
-		}
-		else {
-		    if (ucs2_mode && !U_IS_BMP(c)) {
-			len += 2;
-		    }
-		    else {
-			++len;
-		    }
-		}
-	    }
-
-	    ucnv_close(cnv);
-
-	    str_set_valid_encoding(self, valid_encoding);
-
-	    return len;
+	    return self->encoding->methods.length(self);
 	}
     }
 }
@@ -973,31 +382,7 @@ str_bytesize(string_t *self)
 	    return self->length_in_bytes;
 	}
 	else {
-	    // for strings stored in UTF-16 for which the Ruby encoding is not UTF-16,
-	    // we have to convert back the string in its original encoding to get the length in bytes
-	    USE_CONVERTER(cnv, self);
-
-	    UErrorCode err = U_ZERO_ERROR;
-
-	    long len = 0;
-	    char buffer[STACK_BUFFER_SIZE];
-	    const UChar *source_pos = self->data.uchars;
-	    const UChar *source_end = self->data.uchars + BYTES_TO_UCHARS(self->length_in_bytes);
-	    char *target_end = buffer + STACK_BUFFER_SIZE;
-	    for (;;) {
-		err = U_ZERO_ERROR;
-		char *target_pos = buffer;
-		ucnv_fromUnicode(cnv, &target_pos, target_end, &source_pos, source_end, NULL, true, &err);
-		len += target_pos - buffer;
-		if (err != U_BUFFER_OVERFLOW_ERROR) {
-		    // if the convertion failed, a check was missing somewhere
-		    assert(U_SUCCESS(err));
-		    break;
-		}
-	    }
-
-	    ucnv_close(cnv);
-	    return len;
+	    return self->encoding->methods.bytesize(self);
 	}
     }
     else {
@@ -1110,15 +495,6 @@ str_cannot_cut_surrogate(void))
     rb_raise(rb_eIndexError, "You can't cut a surrogate in two in an encoding that is not UTF-16");
 }
 
-typedef struct {
-    long start_offset_in_bytes;
-    long end_offset_in_bytes;
-} character_boundaries_t;
-
-// TODO: be faster when we already did some computations for an other index
-// (we could reuse an already computed length and
-// continue not from the start but from a known position)
-// Note: However that would complicate the code for a case we don't care much about (not valid strings)
 static character_boundaries_t
 str_get_character_boundaries(string_t *self, long index, bool ucs2_mode)
 {
@@ -1226,87 +602,7 @@ str_get_character_boundaries(string_t *self, long index, bool ucs2_mode)
 	    boundaries.end_offset_in_bytes = boundaries.start_offset_in_bytes + 2;
 	}
 	else {
-	    if (index < 0) {
-		// calculating the length is slow but we don't have much choice
-		index += str_length(self, ucs2_mode);
-		if (index < 0) {
-		    return boundaries;
-		}
-	    }
-
-	    // the code has many similarities with str_length
-	    USE_CONVERTER(cnv, self);
-
-	    const char *pos = self->data.bytes;
-	    const char *end = pos + self->length_in_bytes;
-	    long current_index = 0;
-	    for (;;) {
-		const char *character_start_pos = pos;
-		// iterate through the string one Unicode code point at a time
-		// (we dont care what the character is or if it's valid or not)
-		UErrorCode err = U_ZERO_ERROR;
-		UChar32 c = ucnv_getNextUChar(cnv, &pos, end, &err);
-		if (err == U_INDEX_OUTOFBOUNDS_ERROR) {
-		    // end of the string
-		    break;
-		}
-		long offset_in_bytes = character_start_pos - self->data.bytes;
-		long converted_width = pos - character_start_pos;
-		if (U_FAILURE(err)) {
-		    long min_char_size = self->encoding->min_char_size;
-		    // division of converted_width by min_char_size rounded up
-		    long diff = div_round_up(converted_width, min_char_size);
-		    long length_in_bytes;
-		    if (current_index == index) {
-			if (min_char_size > converted_width) {
-			    length_in_bytes = converted_width;
-			}
-			else {
-			    length_in_bytes = min_char_size;
-			}
-			boundaries.start_offset_in_bytes = offset_in_bytes;
-			boundaries.end_offset_in_bytes = boundaries.start_offset_in_bytes + length_in_bytes;
-			break;
-		    }
-		    else if (current_index + diff > index) {
-			long adjusted_offset = offset_in_bytes + (index - current_index) * min_char_size;
-			if (adjusted_offset + min_char_size > offset_in_bytes + converted_width) {
-			    length_in_bytes = offset_in_bytes + converted_width - adjusted_offset;
-			}
-			else {
-			    length_in_bytes = min_char_size;
-			}
-			boundaries.start_offset_in_bytes = adjusted_offset;
-			boundaries.end_offset_in_bytes = boundaries.start_offset_in_bytes + length_in_bytes;
-			break;
-		    }
-		    current_index += diff;
-		}
-		else {
-		    if (ucs2_mode && !U_IS_BMP(c)) {
-			// you cannot cut a surrogate in an encoding that is not UTF-16
-			if (current_index == index) {
-			    boundaries.start_offset_in_bytes = offset_in_bytes;
-			    break;
-			}
-			else if (current_index+1 == index) {
-			    boundaries.end_offset_in_bytes = offset_in_bytes + converted_width;
-			    break;
-			}
-			++current_index;
-		    }
-
-		    if (current_index == index) {
-			boundaries.start_offset_in_bytes = offset_in_bytes;
-			boundaries.end_offset_in_bytes = boundaries.start_offset_in_bytes + converted_width;
-			break;
-		    }
-
-		    ++current_index;
-		}
-	    }
-
-	    ucnv_close(cnv);
+	    return self->encoding->methods.get_character_boundaries(self, index, ucs2_mode);
 	}
     }
 
@@ -1758,7 +1054,7 @@ void
 Init_MRString(void)
 {
     // encodings must be loaded before strings
-    assert((default_external != NULL) && (default_internal != NULL));
+    assert(rb_cMREncoding != 0);
 
     rb_cMRString = rb_define_class("MRString", rb_cObject);
     rb_objc_define_method(OBJC_CLASS(rb_cMRString), "alloc", mr_str_s_alloc, 0);
