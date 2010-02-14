@@ -232,35 +232,27 @@ str_replace_with_cfstring(string_t *self, CFStringRef source)
 static void
 str_replace(string_t *self, VALUE arg)
 {
-    if (SPECIAL_CONST_P(arg)) {
-	str_replace(self, rb_str_to_str(arg));
+    VALUE klass = CLASS_OF(arg);
+    if (klass == rb_cMRString) {
+	str_replace_with_string(self, STR(arg));
+    }
+    else if (klass == rb_cByteString) {
+	self->encoding = encodings[ENCODING_BINARY];
+	self->capacity_in_bytes = self->length_in_bytes = rb_bytestring_length(arg);
+	if (self->length_in_bytes != 0) {
+	    GC_WB(&self->data.bytes, xmalloc(self->length_in_bytes));
+	    assert(self->data.bytes != NULL);
+	    memcpy(self->data.bytes, rb_bytestring_byte_pointer(arg), self->length_in_bytes);
+	}
+    }
+    else if (TYPE(arg) == T_STRING) {
+	str_replace_with_cfstring(self, (CFStringRef)arg);
+    }
+    else if (klass == rb_cSymbol) {
+	abort(); // TODO
     }
     else {
-	VALUE klass = OBJC_CLASS(arg);
-	if (klass == rb_cMRString) {
-	    str_replace_with_string(self, STR(arg));
-	}
-	else if (klass == rb_cByteString) {
-	    self->encoding = encodings[ENCODING_BINARY];
-	    self->capacity_in_bytes = self->length_in_bytes = rb_bytestring_length(arg);
-	    if (self->length_in_bytes != 0) {
-		GC_WB(&self->data.bytes, xmalloc(self->length_in_bytes));
-		assert(self->data.bytes != NULL);
-		memcpy(self->data.bytes, rb_bytestring_byte_pointer(arg), self->length_in_bytes);
-	    }
-	}
-	else if ((klass == rb_cString)
-		    || (klass == rb_cCFString)
-		    || (klass == rb_cNSString)
-		    || (klass == rb_cNSMutableString)) {
-	    str_replace_with_cfstring(self, (CFStringRef)arg);
-	}
-	else if (klass == rb_cSymbol) {
-	    abort(); // TODO
-	}
-	else {
-	    str_replace(self, rb_str_to_str(arg));
-	}
+	str_replace(self, rb_str_to_str(arg));
     }
 }
 
@@ -278,26 +270,21 @@ str_clear(string_t *self)
     self->length_in_bytes = 0;
 }
 
-/*
-static void
-str_make_temporary_string_from_cfstring(string_t *destination, CFStringRef source)
+static string_t *
+str_new_from_string(string_t *source)
 {
-    // TODO: also make it frozen to be sure it's not modified
-    destination->basic.flags = 0;
-    destination->basic.klass = rb_cMRString;
-    UChar *characters = (UChar *)CFStringGetCharactersPtr(source);
-    if (characters != NULL) {
-	destination->flags = 0;
-	destination->data.uchars = characters;
-	destination->capacity_in_bytes = destination->length_in_bytes = UCHARS_TO_BYTES(CFStringGetLength(source));
-	destination->encoding = encodings[ENCODING_UTF16_NATIVE];
-	str_set_stored_in_uchars(destination, true);
-    }
-    else {
-	str_replace_with_cfstring(destination, source);
-    }
+    string_t *destination = str_alloc();
+    str_replace_with_string(destination, source);
+    return destination;
 }
-*/
+
+static string_t *
+str_new_from_cfstring(CFStringRef source)
+{
+    string_t *destination = str_alloc();
+    str_replace_with_cfstring(destination, source);
+    return destination;
+}
 
 
 static void
@@ -342,6 +329,21 @@ str_try_making_data_uchars(string_t *self)
     }
 
     return self->encoding->methods.try_making_data_uchars(self);
+}
+
+static void
+str_make_same_format(string_t *str1, string_t *str2)
+{
+    if (str_is_stored_in_uchars(str1) != str_is_stored_in_uchars(str2)) {
+	if (str_is_stored_in_uchars(str1)) {
+	    if (!str_try_making_data_uchars(str2)) {
+		str_make_data_binary(str1);
+	    }
+	}
+	else {
+	    str_make_data_binary(str2);
+	}
+    }
 }
 
 static long
@@ -708,21 +710,9 @@ str_plus_string(string_t *str1, string_t *str2)
 	return new_str;
     }
 
-    bool str1_in_uchars = str_is_stored_in_uchars(str1);
-    bool str2_in_uchars = str_is_stored_in_uchars(str2);
+    str_make_same_format(str1, str2);
 
-    if (str1_in_uchars != str2_in_uchars) {
-	if (str_try_making_data_uchars(str1) && str_try_making_data_uchars(str2)) {
-	    str1_in_uchars = str2_in_uchars = true;
-	}
-	else {
-	    str_make_data_binary(str1);
-	    str_make_data_binary(str2);
-	    str1_in_uchars = str2_in_uchars = false;
-	}
-    }
-
-    str_set_stored_in_uchars(new_str, str1_in_uchars);
+    str_set_stored_in_uchars(new_str, str_is_stored_in_uchars(str1));
     long length_in_bytes = str1->length_in_bytes + str2->length_in_bytes;
     new_str->data.bytes = xmalloc(length_in_bytes);
     if (str1->length_in_bytes > 0) {
@@ -748,19 +738,7 @@ str_concat_string(string_t *self, string_t *str)
     }
 
     str_must_have_compatible_encoding(self, str);
-
-    if (str_is_stored_in_uchars(self) != str_is_stored_in_uchars(str)) {
-	// we try not to change the internal format of self if it's possible
-	// (because self is generally bigger that the string concatenated)
-	if (str_is_stored_in_uchars(self)) {
-	    if (!str_try_making_data_uchars(str)) {
-		str_make_data_binary(self);
-	    }
-	}
-	else {
-	    str_make_data_binary(str);
-	}
-    }
+    str_make_same_format(self, str);
 
     long new_length_in_bytes = self->length_in_bytes + str->length_in_bytes;
     // TODO: we should maybe merge flags
@@ -826,6 +804,26 @@ str_is_equal_to_string(string_t *self, string_t *str)
     }
 }
 
+bool
+str_include(string_t *self, string_t *searched)
+{
+    if ((searched->length_in_bytes == 0) || (self == searched)) {
+	return true;
+    }
+    str_must_have_compatible_encoding(self, searched);
+    str_make_same_format(self, searched);
+    if (searched->length_in_bytes > self->length_in_bytes) {
+	return false;
+    }
+    long count = self->length_in_bytes - searched->length_in_bytes + 1;
+    for (int i = 0; i < count; ++i) {
+	if (memcmp(self->data.bytes+i, searched->data.bytes, searched->length_in_bytes) == 0) {
+	    return true;
+	}
+    }
+    return false;
+}
+
 //----------------------------------------------
 // Functions called by MacRuby
 
@@ -835,8 +833,8 @@ mr_enc_s_is_compatible(VALUE klass, SEL sel, VALUE str1, VALUE str2)
     if (SPECIAL_CONST_P(str1) || SPECIAL_CONST_P(str2)) {
 	return Qnil;
     }
-    assert(OBJC_CLASS(str1) == rb_cMRString);
-    assert(OBJC_CLASS(str2) == rb_cMRString);
+    assert(OBJC_CLASS(str1) == rb_cMRString); // TODO
+    assert(OBJC_CLASS(str2) == rb_cMRString); // TODO
     encoding_t *encoding = str_compatible_encoding(STR(str1), STR(str2));
     if (encoding == NULL) {
 	return Qnil;
@@ -967,9 +965,20 @@ mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
 
 	    case T_STRING:
 		{
-		    assert(OBJC_CLASS(index) == rb_cMRString); // TODO
-		    str_must_have_compatible_encoding(STR(self), STR(index));
-		    abort(); // TODO
+		    if (OBJC_CLASS(index) == rb_cMRString) {
+			string_t *searched = STR(index);
+			if (str_include(STR(self), searched)) {
+			    return (VALUE)str_new_from_string(searched);
+			}
+		    }
+		    else {
+			string_t *searched = str_new_from_cfstring((CFStringRef)index);
+			if (str_include(STR(self), searched)) {
+			    // no need to duplicate the string as we just created it
+			    return (VALUE)searched;
+			}
+		    }
+		    return Qnil;
 		}
 
 	    default:
@@ -1052,10 +1061,20 @@ mr_str_equal(VALUE self, SEL sel, VALUE compared_to)
     if (SPECIAL_CONST_P(compared_to)) {
 	return Qfalse;
     }
-    if (OBJC_CLASS(compared_to) != rb_cMRString) {
-	abort(); // TODO
+
+    if ((TYPE(compared_to) == T_STRING) || (OBJC_CLASS(compared_to) == rb_cMRString)) {
+	string_t *str;
+	if (OBJC_CLASS(compared_to) == rb_cMRString) {
+	    str = STR(compared_to);
+	}
+	else {
+	    str = str_new_from_cfstring((CFStringRef)compared_to);
+	}
+	return str_is_equal_to_string(STR(self), str) ? Qtrue : Qfalse;
     }
-    return str_is_equal_to_string(STR(self), STR(compared_to)) ? Qtrue : Qfalse;
+    else {
+	return Qfalse;
+    }
 }
 
 static VALUE

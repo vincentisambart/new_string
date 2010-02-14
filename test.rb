@@ -385,6 +385,11 @@ assert_not_equal old_s, s
 assert_equal empty_utf8, empty_utf16le
 assert_equal bonjour_utf8, bonjour_ascii
 assert_not_equal bonjour_utf16le, bonjour_ascii
+assert_equal bonjour_ascii, (bonjour_ascii+bonjour_ascii)[1..-1][bonjour_ascii]
+
+a = S.new('a')
+assert_equal a, 'a'
+assert_equal a, a['a']
 
 assert_exception_raised(Encoding::CompatibilityError) { ohayou_utf8 + ohayou_utf16le }
 assert_exception_raised(Encoding::CompatibilityError) { ohayou_utf8 << ohayou_utf16le }
