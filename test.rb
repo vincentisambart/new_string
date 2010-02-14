@@ -358,6 +358,7 @@ assert_equal S.new('ab'), S.new('a') + S.new('b')
 assert_equal S.new('b'), S.new + S.new('b')
 assert_equal S.new('a'), S.new('a') + S.new
 assert_equal S.new, S.new + S.new
+assert_exception_raised(TypeError) { S.new('a') + 2 }
 
 ohayou_copy = ohayou_utf8.dup
 assert_equal ohayou_utf8, ohayou_copy.replace(ohayou_copy)

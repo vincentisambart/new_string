@@ -824,6 +824,24 @@ str_include(string_t *self, string_t *searched)
     return false;
 }
 
+string_t *
+str_need_string(VALUE str)
+{
+    if (CLASS_OF(str) == rb_cMRString) {
+	return (string_t *)str;
+    }
+
+    if (TYPE(str) != T_STRING) {
+	str = rb_str_to_str(str);
+    }
+    if (OBJC_CLASS(str) != rb_cMRString) {
+	return str_new_from_cfstring((CFStringRef)str);
+    }
+    else {
+	return (string_t *)str;
+    }
+}
+
 //----------------------------------------------
 // Functions called by MacRuby
 
@@ -1037,21 +1055,22 @@ mr_str_getchar(VALUE self, SEL sel, VALUE index)
 }
 
 static VALUE
-mr_str_plus(VALUE self, SEL sel, VALUE str)
+mr_str_plus(VALUE self, SEL sel, VALUE to_add)
 {
-    if (SPECIAL_CONST_P(str) || (OBJC_CLASS(str) != rb_cMRString)) {
-	abort(); // TODO
-    }
-    return (VALUE)str_plus_string(STR(self), STR(str));
+    return (VALUE)str_plus_string(STR(self), str_need_string(to_add));
 }
 
 static VALUE
-mr_str_concat(VALUE self, SEL sel, VALUE str)
+mr_str_concat(VALUE self, SEL sel, VALUE to_concat)
 {
-    if (SPECIAL_CONST_P(str) || (OBJC_CLASS(str) != rb_cMRString)) {
-	abort(); // TODO (should also accept integers)
+    switch (TYPE(to_concat)) {
+	case T_FIXNUM:
+	case T_BIGNUM:
+	    abort(); // TODO
+
+	default:
+	    str_concat_string(STR(self), str_need_string(to_concat));
     }
-    str_concat_string(STR(self), STR(str));
     return self;
 }
 
