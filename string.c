@@ -901,61 +901,60 @@ mr_str_is_ascii_only(VALUE self, SEL sel)
 static VALUE
 mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
 {
+    string_t *ret;
     if (argc == 1) {
 	VALUE index = argv[0];
 	switch (TYPE(index)) {
 	    case T_FIXNUM:
+		ret = str_get_character_at(STR(self), FIX2LONG(index), true);
+		break;
+
+	    case T_REGEXP:
+		abort(); // TODO
+
+	    case T_STRING:
+		abort(); // TODO
+
+	    default:
 		{
-		    string_t *ret = str_get_character_at(STR(self), FIX2LONG(index), true);
-		    if (ret == NULL) {
-			return Qnil;
+		    VALUE rb_start = 0, rb_end = 0;
+		    int exclude_end = false;
+		    if (rb_range_values(index, &rb_start, &rb_end, &exclude_end)) {
+			long start = NUM2LONG(rb_start);
+			long end = NUM2LONG(rb_end);
+			if (exclude_end) {
+			    --end;
+			}
+			ret = str_get_characters(STR(self), start, end, true);
 		    }
 		    else {
-			return (VALUE)ret;
+			ret = str_get_character_at(STR(self), NUM2LONG(index), true);
 		    }
 		}
+		break;
 	}
-	// TODO: use rb_range_values instead of rb_range_extract
-	if (rb_obj_is_kind_of(index, rb_cRange)) {
-	    VALUE rb_start = 0, rb_end = 0;
-	    bool exclude_end = false;
-	    rb_range_extract(index, &rb_start, &rb_end, &exclude_end);
-	    long start = NUM2LONG(rb_start);
-	    long end = NUM2LONG(rb_end);
-	    if (exclude_end) {
-		--end;
-	    }
-	    string_t *ret = str_get_characters(STR(self), start, end, true);
-	    if (ret == NULL) {
-		return Qnil;
-	    }
-	    else {
-		return (VALUE)ret;
-	    }
-	}
-
-	abort(); // TODO
     }
     else if (argc == 2) {
 	long length = NUM2LONG(argv[1]);
+	long start = NUM2LONG(argv[0]);
 	if (length < 0) {
 	    return Qnil;
 	}
-	long start = NUM2LONG(argv[0]);
 	long end = start + length - 1;
 	if ((start < 0) && (end >= 0)) {
 	    end = -1;
 	}
-	string_t *ret = str_get_characters(STR(self), start, end, true);
-	if (ret == NULL) {
-	    return Qnil;
-	}
-	else {
-	    return (VALUE)ret;
-	}
+	ret = str_get_characters(STR(self), start, end, true);
     }
     else {
 	rb_raise(rb_eArgError, "wrong number of arguments (%d for 1)", argc);
+    }
+
+    if (ret == NULL) {
+	return Qnil;
+    }
+    else {
+	return (VALUE)ret;
     }
 }
 
