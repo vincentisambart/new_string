@@ -18,6 +18,21 @@
 
 VALUE rb_cMRString;
 
+#undef TYPE // TODO: remove this when merging
+extern VALUE rb_cMRString;
+static inline int
+rb_type2(VALUE obj)
+{
+    if (CLASS_OF(obj) == rb_cMRString) {
+	return T_STRING;
+    }
+    else {
+	return rb_type(obj);
+    }
+}
+#define TYPE(obj) rb_type2(obj)
+
+
 static void
 str_update_flags_utf16(string_t *self)
 {
@@ -968,9 +983,6 @@ mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
     if (argc == 1) {
 	VALUE index = argv[0];
 	int type = TYPE(index);
-	if (!SPECIAL_CONST_P(index) && (OBJC_CLASS(index) == rb_cMRString)) {
-	    type = T_STRING; // TODO: remove this when merging it in MacRuby
-	}
 	switch (type) {
 	    case T_FIXNUM:
 		{
@@ -1081,7 +1093,7 @@ mr_str_equal(VALUE self, SEL sel, VALUE compared_to)
 	return Qfalse;
     }
 
-    if ((TYPE(compared_to) == T_STRING) || (OBJC_CLASS(compared_to) == rb_cMRString)) {
+    if (TYPE(compared_to) == T_STRING) {
 	string_t *str;
 	if (OBJC_CLASS(compared_to) == rb_cMRString) {
 	    str = STR(compared_to);
