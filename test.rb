@@ -347,6 +347,8 @@ assert_equal nil, E.compatible?(bonjour_ascii, bonjour_utf16le)
 assert_equal nil, E.compatible?(bonjour_utf16le, bonjour_ascii)
 assert_equal nil, E.compatible?(ohayou_utf8, ohayou_utf16le)
 assert_equal nil, E.compatible?(ohayou_utf16le, ohayou_utf8)
+assert_equal nil, E.compatible?(ohayou_utf8, nil)
+assert_equal nil, E.compatible?(ohayou_utf8, 1)
 
 assert_equal true, empty_utf8.valid_encoding?
 assert_equal true, bonjour_utf8.force_encoding(E::BINARY).ascii_only?
@@ -356,6 +358,10 @@ assert_equal S.new('ab'), S.new('a') + S.new('b')
 assert_equal S.new('b'), S.new + S.new('b')
 assert_equal S.new('a'), S.new('a') + S.new
 assert_equal S.new, S.new + S.new
+
+ohayou_copy = ohayou_utf8.dup
+assert_equal ohayou_utf8, ohayou_copy.replace(ohayou_copy)
+assert_exception_raised(TypeError) { S.new.replace(2) }
 
 s = empty_utf8.dup
 s << empty_utf16le
