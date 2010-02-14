@@ -819,7 +819,6 @@ str_is_equal_to_string(string_t *self, string_t *str)
     }
 }
 
-/*
 static long
 str_offset_in_bytes_to_index(string_t *self, long offset_in_bytes, bool ucs2_mode)
 {
@@ -831,26 +830,37 @@ str_offset_in_bytes_to_index(string_t *self, long offset_in_bytes, bool ucs2_mod
     }
     abort(); // TODO
 }
-*/
 
-static bool
-str_include_string(string_t *self, string_t *searched)
+static long
+str_offset_in_bytes_for_string(string_t *self, string_t *searched, long start_offset_in_bytes)
 {
-    if ((self == searched) || (searched->length_in_bytes == 0)) {
-	return true;
+    if (start_offset_in_bytes >= self->length_in_bytes) {
+	return -1;
+    }
+    if ((self == searched) && (start_offset_in_bytes == 0)) {
+	return 0;
+    }
+    if (searched->length_in_bytes == 0) {
+	return start_offset_in_bytes;
     }
     str_must_have_compatible_encoding(self, searched);
     str_make_same_format(self, searched);
     if (searched->length_in_bytes > self->length_in_bytes) {
-	return false;
+	return -1;
     }
     long max_offset_in_bytes = self->length_in_bytes - searched->length_in_bytes + 1;
-    for (int offset_in_bytes = 0; offset_in_bytes < max_offset_in_bytes; ++offset_in_bytes) {
+    for (int offset_in_bytes = start_offset_in_bytes; offset_in_bytes < max_offset_in_bytes; ++offset_in_bytes) {
 	if (memcmp(self->data.bytes+offset_in_bytes, searched->data.bytes, searched->length_in_bytes) == 0) {
-	    return true;
+	    return offset_in_bytes;
 	}
     }
-    return false;
+    return -1;
+}
+
+static bool
+str_include_string(string_t *self, string_t *searched)
+{
+    return (str_offset_in_bytes_for_string(self, searched, 0) != -1);
 }
 
 static string_t *
@@ -996,8 +1006,7 @@ mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
     string_t *ret;
     if (argc == 1) {
 	VALUE index = argv[0];
-	int type = TYPE(index);
-	switch (type) {
+	switch (TYPE(index)) {
 	    case T_FIXNUM:
 		{
 		    ret = str_get_character_at(STR(self), FIX2LONG(index), true);
@@ -1057,7 +1066,7 @@ mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
 	ret = str_get_characters(STR(self), start, end, true);
     }
     else {
-	rb_raise(rb_eArgError, "wrong number of arguments (%d for 1)", argc);
+	rb_raise(rb_eArgError, "wrong number of arguments (%d for 1..2)", argc);
     }
 
     if (ret == NULL) {
@@ -1067,6 +1076,35 @@ mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
 	return (VALUE)ret;
     }
 }
+
+static VALUE
+mr_str_index(VALUE self, SEL sel, int argc, VALUE *argv)
+{
+    long offset_in_bytes;
+    if ((argc < 1) || (argc > 2)) {
+	rb_raise(rb_eArgError, "wrong number of arguments (%d for 1..2)", argc);
+    }
+    VALUE rb_searched = argv[0];
+    if (TYPE(rb_searched) == T_REGEXP) {
+	abort(); // TODO
+    }
+
+    long start_offset_in_bytes = 0;
+    if (argc == 2) {
+	abort(); // TODO
+    }
+    string_t *searched = str_need_string(rb_searched);
+    offset_in_bytes = str_offset_in_bytes_for_string(STR(self), searched, start_offset_in_bytes);
+
+    if (offset_in_bytes == -1) {
+	return Qnil;
+    }
+    else {
+	long index = str_offset_in_bytes_to_index(STR(self), offset_in_bytes, true);
+	return INT2NUM(index);
+    }
+}
+
 
 static VALUE
 mr_str_getchar(VALUE self, SEL sel, VALUE index)
@@ -1172,6 +1210,7 @@ Init_MRString(void)
     rb_objc_define_method(rb_cMRString, "valid_encoding?", mr_str_is_valid_encoding, 0);
     rb_objc_define_method(rb_cMRString, "ascii_only?", mr_str_is_ascii_only, 0);
     rb_objc_define_method(rb_cMRString, "[]", mr_str_aref, -1);
+    rb_objc_define_method(rb_cMRString, "index", mr_str_index, -1);
     rb_objc_define_method(rb_cMRString, "+", mr_str_plus, 1);
     rb_objc_define_method(rb_cMRString, "<<", mr_str_concat, 1);
     rb_objc_define_method(rb_cMRString, "concat", mr_str_concat, 1);

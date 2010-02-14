@@ -395,6 +395,11 @@ assert_equal a, a['a']
 assert_exception_raised(Encoding::CompatibilityError) { ohayou_utf8 + ohayou_utf16le }
 assert_exception_raised(Encoding::CompatibilityError) { ohayou_utf8 << ohayou_utf16le }
 
+assert_exception_raised(Encoding::CompatibilityError) { ohayou_utf8.index(ohayou_utf16le) }
+assert_equal nil, empty_utf16le.index(ohayou_utf16le)
+assert_equal 0, ohayou_utf16le.index(ohayou_utf16le)
+assert_equal 0, ohayou_utf16le.index(empty_utf8)
+
 if $tests_failed_count == 0
   puts "everything's fine"
 else
