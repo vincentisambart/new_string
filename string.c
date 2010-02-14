@@ -18,7 +18,7 @@
 
 VALUE rb_cMRString;
 
-#undef TYPE // TODO: remove this when merging
+#undef TYPE // TODO: remove this when MRString has become a child of NSString
 extern VALUE rb_cMRString;
 static inline int
 rb_type2(VALUE obj)
@@ -819,10 +819,24 @@ str_is_equal_to_string(string_t *self, string_t *str)
     }
 }
 
-bool
-str_include(string_t *self, string_t *searched)
+/*
+static long
+str_offset_in_bytes_to_index(string_t *self, long offset_in_bytes, bool ucs2_mode)
 {
-    if ((searched->length_in_bytes == 0) || (self == searched)) {
+    if ((offset_in_bytes >= self->length_in_bytes) || (offset_in_bytes < 0)) {
+	return -1;
+    }
+    if (offset_in_bytes == 0) {
+	return 0;
+    }
+    abort(); // TODO
+}
+*/
+
+static bool
+str_include_string(string_t *self, string_t *searched)
+{
+    if ((self == searched) || (searched->length_in_bytes == 0)) {
 	return true;
     }
     str_must_have_compatible_encoding(self, searched);
@@ -830,16 +844,16 @@ str_include(string_t *self, string_t *searched)
     if (searched->length_in_bytes > self->length_in_bytes) {
 	return false;
     }
-    long count = self->length_in_bytes - searched->length_in_bytes + 1;
-    for (int i = 0; i < count; ++i) {
-	if (memcmp(self->data.bytes+i, searched->data.bytes, searched->length_in_bytes) == 0) {
+    long max_offset_in_bytes = self->length_in_bytes - searched->length_in_bytes + 1;
+    for (int offset_in_bytes = 0; offset_in_bytes < max_offset_in_bytes; ++offset_in_bytes) {
+	if (memcmp(self->data.bytes+offset_in_bytes, searched->data.bytes, searched->length_in_bytes) == 0) {
 	    return true;
 	}
     }
     return false;
 }
 
-string_t *
+static string_t *
 str_need_string(VALUE str)
 {
     if (CLASS_OF(str) == rb_cMRString) {
@@ -997,13 +1011,13 @@ mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
 		{
 		    if (OBJC_CLASS(index) == rb_cMRString) {
 			string_t *searched = STR(index);
-			if (str_include(STR(self), searched)) {
+			if (str_include_string(STR(self), searched)) {
 			    return (VALUE)str_new_from_string(searched);
 			}
 		    }
 		    else {
 			string_t *searched = str_new_from_cfstring((CFStringRef)index);
-			if (str_include(STR(self), searched)) {
+			if (str_include_string(STR(self), searched)) {
 			    // no need to duplicate the string as we just created it
 			    return (VALUE)searched;
 			}
@@ -1115,6 +1129,12 @@ mr_str_not_equal(VALUE self, SEL sel, VALUE compared_to)
 }
 
 static VALUE
+mr_str_include(VALUE self, SEL sel, VALUE searched)
+{
+    return str_include_string(STR(self), str_need_string(searched)) ? Qtrue : Qfalse;
+}
+
+static VALUE
 mr_str_is_stored_in_uchars(VALUE self, SEL sel)
 {
     return str_is_stored_in_uchars(STR(self)) ? Qtrue : Qfalse;
@@ -1157,6 +1177,7 @@ Init_MRString(void)
     rb_objc_define_method(rb_cMRString, "concat", mr_str_concat, 1);
     rb_objc_define_method(rb_cMRString, "==", mr_str_equal, 1);
     rb_objc_define_method(rb_cMRString, "!=", mr_str_not_equal, 1);
+    rb_objc_define_method(rb_cMRString, "include?", mr_str_include, 1);
     rb_objc_define_method(rb_cMRString, "to_s", mr_str_to_s, 0);
     rb_objc_define_method(rb_cMRString, "to_str", mr_str_to_s, 0);
 
