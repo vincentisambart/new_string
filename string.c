@@ -828,7 +828,30 @@ str_offset_in_bytes_to_index(string_t *self, long offset_in_bytes, bool ucs2_mod
     if (offset_in_bytes == 0) {
 	return 0;
     }
-    abort(); // TODO
+
+    if (str_is_stored_in_uchars(self)) {
+	if (ucs2_mode || str_known_not_to_have_any_supplementary(self)) {
+	    return BYTES_TO_UCHARS(offset_in_bytes);
+	}
+	else {
+	    abort(); // TODO
+	}
+    }
+    else {
+	if (self->encoding->single_byte_encoding) {
+	    return offset_in_bytes;
+	}
+	else if (UTF32_ENC(self->encoding) && (!ucs2_mode || str_known_not_to_have_any_supplementary(self))) {
+	    return offset_in_bytes / 4;
+	}
+	else if (NON_NATIVE_UTF16_ENC(self->encoding) && (ucs2_mode || str_known_not_to_have_any_supplementary(self))) {
+	    return BYTES_TO_UCHARS(offset_in_bytes);
+	}
+	else {
+	    //return self->encoding->methods.offset_in_bytes_to_index(self, offset_in_bytes, ucs2_mode);
+	    abort(); // TODO
+	}
+    }
 }
 
 static long
@@ -855,6 +878,35 @@ str_offset_in_bytes_for_string(string_t *self, string_t *searched, long start_of
 	}
     }
     return -1;
+}
+
+static long
+str_index_for_string(string_t *self, string_t *searched, long start_index, bool ucs2_mode)
+{
+    long start_offset_in_bytes;
+    if (start_index == 0) {
+	start_offset_in_bytes = 0;
+    }
+    else {
+	character_boundaries_t boundaries = str_get_character_boundaries(self, start_index, ucs2_mode);
+	if (boundaries.start_offset_in_bytes == -1) {
+	    if (boundaries.end_offset_in_bytes == -1) {
+		return -1;
+	    }
+	    else {
+		// you cannot cut a surrogate in an encoding that is not UTF-16
+		str_cannot_cut_surrogate();
+	    }
+	}
+	start_offset_in_bytes = boundaries.start_offset_in_bytes;
+    }
+
+    long offset_in_bytes = str_offset_in_bytes_for_string(STR(self), searched, start_offset_in_bytes);
+
+    if (offset_in_bytes == -1) {
+	return -1;
+    }
+    return str_offset_in_bytes_to_index(STR(self), offset_in_bytes, ucs2_mode);
 }
 
 static bool
@@ -1080,27 +1132,26 @@ mr_str_aref(VALUE self, SEL sel, int argc, VALUE *argv)
 static VALUE
 mr_str_index(VALUE self, SEL sel, int argc, VALUE *argv)
 {
-    long offset_in_bytes;
     if ((argc < 1) || (argc > 2)) {
 	rb_raise(rb_eArgError, "wrong number of arguments (%d for 1..2)", argc);
     }
+
     VALUE rb_searched = argv[0];
     if (TYPE(rb_searched) == T_REGEXP) {
 	abort(); // TODO
     }
 
-    long start_offset_in_bytes = 0;
+    long start_index = 0;
     if (argc == 2) {
-	abort(); // TODO
+	start_index = NUM2LONG(argv[1]);
     }
     string_t *searched = str_need_string(rb_searched);
-    offset_in_bytes = str_offset_in_bytes_for_string(STR(self), searched, start_offset_in_bytes);
 
-    if (offset_in_bytes == -1) {
+    long index = str_index_for_string(STR(self), searched, start_index, true);
+    if (index == -1) {
 	return Qnil;
     }
     else {
-	long index = str_offset_in_bytes_to_index(STR(self), offset_in_bytes, true);
 	return INT2NUM(index);
     }
 }
