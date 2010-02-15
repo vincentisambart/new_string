@@ -836,7 +836,6 @@ str_offset_in_bytes_to_index(string_t *self, long offset_in_bytes, bool ucs2_mod
 	else {
 	    long length = BYTES_TO_UCHARS(self->length_in_bytes);
 	    long index = 0, i = 0;
-	    long searched_offset = BYTES_TO_UCHARS(ucs2_mode);
 	    for (;;) {
 		if (U16_IS_LEAD(self->data.uchars[i]) && (i+1 < length) && U16_IS_TRAIL(self->data.uchars[i+1])) {
 		    i += 2;
@@ -887,8 +886,15 @@ str_offset_in_bytes_for_string(string_t *self, string_t *searched, long start_of
     if (searched->length_in_bytes > self->length_in_bytes) {
 	return -1;
     }
+    long increment;
+    if (str_is_stored_in_uchars(self)) {
+	increment = 2;
+    }
+    else {
+	increment = self->encoding->min_char_size;
+    }
     long max_offset_in_bytes = self->length_in_bytes - searched->length_in_bytes + 1;
-    for (int offset_in_bytes = start_offset_in_bytes; offset_in_bytes < max_offset_in_bytes; ++offset_in_bytes) {
+    for (long offset_in_bytes = start_offset_in_bytes; offset_in_bytes < max_offset_in_bytes; offset_in_bytes += increment) {
 	if (memcmp(self->data.bytes+offset_in_bytes, searched->data.bytes, searched->length_in_bytes) == 0) {
 	    return offset_in_bytes;
 	}

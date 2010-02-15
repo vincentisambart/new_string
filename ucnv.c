@@ -354,15 +354,16 @@ str_ucnv_offset_in_bytes_to_index(string_t *self, long offset_in_bytes, bool ucs
 	    long min_char_size = self->encoding->min_char_size;
 	    long converted_width = current_position - character_start_position;
 	    long to_add = div_round_up(converted_width, min_char_size);
-	    if (searched_position < index + to_add) {
+	    if (searched_position < character_start_position + to_add) {
 		long difference = searched_position - character_start_position;
-		return index + (difference / min_char_size);
+		index += (difference / min_char_size);
+		break;
 	    }
 	    index += to_add;
 	}
 	else {
 	    if (searched_position < current_position) {
-		return index;
+		break;
 	    }
 	    if (ucs2_mode && !U_IS_BMP(c)) {
 		index += 2;
@@ -372,13 +373,13 @@ str_ucnv_offset_in_bytes_to_index(string_t *self, long offset_in_bytes, bool ucs
 	    }
 	}
 	if (searched_position == current_position) {
-	    return index;
+	    break;
 	}
     }
 
     ucnv_close(cnv);
 
-    return len;
+    return index;
 }
 
 void

@@ -193,7 +193,7 @@ add_encoding(
     encoding->methods.length = str_undefined_length;
     encoding->methods.bytesize = str_undefined_bytesize;
     encoding->methods.get_character_boundaries = str_undefined_get_character_boundaries;
-    encoding->methods.offset_in_bytes_to_index = str_undefined_offset_in_bytes_to_index
+    encoding->methods.offset_in_bytes_to_index = str_undefined_offset_in_bytes_to_index;
 
     switch (encoding_type) {
 	case ENCODING_TYPE_SPECIAL:

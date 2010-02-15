@@ -153,6 +153,12 @@ UNICODE_ENCODINGS.each do |enc|
     assert_equal 36, data.bytesize
   end
 
+  double = data + data
+  assert_equal 0, double.index(data)
+  assert_equal 0, double.index(data, 0)
+  (1..9).each { |i| assert_equal 9, double.index(data, i) }
+  (10..double.length).each { |i| assert_equal nil, double.index(data, i) }
+
   if enc == :UTF_16LE
     assert_equal utf16le('お'), data[0]
     assert_equal utf16le('お'), data[0, 1]
@@ -327,6 +333,7 @@ ohayou_utf8 = read_data('ohayougozaimasu', :UTF_8)
 ohayou_utf16le = read_data('ohayougozaimasu', :UTF_16LE)
 empty_utf8 = S.new.force_encoding(E::UTF_8)
 empty_utf16le = S.new.force_encoding(E::UTF_16LE)
+surrogate_utf16le = read_data('surrogate', :UTF_16LE)
 
 assert_equal true, bonjour_ascii.ascii_only?
 assert_equal true, bonjour_utf8.ascii_only?
@@ -399,6 +406,15 @@ assert_exception_raised(Encoding::CompatibilityError) { ohayou_utf8.index(ohayou
 assert_equal nil, empty_utf16le.index(ohayou_utf16le)
 assert_equal 0, ohayou_utf16le.index(ohayou_utf16le)
 assert_equal 0, ohayou_utf16le.index(empty_utf8)
+assert_equal 6, bonjour_utf16le.index(utf16le('r'))
+
+surrogate_ohayou_utf16 = surrogate_utf16le + ohayou_utf16le
+if MACRUBY
+  assert_equal 2, surrogate_ohayou_utf16.index(ohayou_utf16le)
+  (0..2).each {|i| assert_equal 2, surrogate_ohayou_utf16.index(ohayou_utf16le, i) }
+else
+  assert_equal 1, surrogate_ohayou_utf16.index(ohayou_utf16le)
+end
 
 if $tests_failed_count == 0
   puts "everything's fine"
