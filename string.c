@@ -834,7 +834,24 @@ str_offset_in_bytes_to_index(string_t *self, long offset_in_bytes, bool ucs2_mod
 	    return BYTES_TO_UCHARS(offset_in_bytes);
 	}
 	else {
-	    abort(); // TODO
+	    long length = BYTES_TO_UCHARS(self->length_in_bytes);
+	    long index = 0, i = 0;
+	    long searched_offset = BYTES_TO_UCHARS(ucs2_mode);
+	    for (;;) {
+		if (U16_IS_LEAD(self->data.uchars[i]) && (i+1 < length) && U16_IS_TRAIL(self->data.uchars[i+1])) {
+		    i += 2;
+		}
+		else {
+		    ++i;
+		}
+		if (offset_in_bytes < i) {
+		    return index;
+		}
+		++index;
+		if (offset_in_bytes == i) {
+		    return index;
+		}
+	    }
 	}
     }
     else {
@@ -848,8 +865,7 @@ str_offset_in_bytes_to_index(string_t *self, long offset_in_bytes, bool ucs2_mod
 	    return BYTES_TO_UCHARS(offset_in_bytes);
 	}
 	else {
-	    //return self->encoding->methods.offset_in_bytes_to_index(self, offset_in_bytes, ucs2_mode);
-	    abort(); // TODO
+	    return self->encoding->methods.offset_in_bytes_to_index(self, offset_in_bytes, ucs2_mode);
 	}
     }
 }

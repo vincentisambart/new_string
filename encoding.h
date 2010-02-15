@@ -55,6 +55,7 @@ typedef struct {
     long (*length)(string_t *, bool);
     long (*bytesize)(string_t *);
     character_boundaries_t (*get_character_boundaries)(string_t *, long, bool);
+    long (*offset_in_bytes_to_index)(string_t *, long, bool);
 } encoding_methods_t;
 
 typedef struct encoding_s {

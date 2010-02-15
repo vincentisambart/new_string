@@ -19,6 +19,7 @@ static bool str_undefined_try_making_data_uchars(string_t *self) { abort(); }
 static long str_undefined_length(string_t *self, bool ucs2_mode) { abort(); }
 static long str_undefined_bytesize(string_t *self) { abort(); }
 static character_boundaries_t str_undefined_get_character_boundaries(string_t *self, long index, bool ucs2_mode) { abort(); }
+static long str_undefined_offset_in_bytes_to_index(string_t *self, long offset_in_bytes, bool ucs2_mode) { abort(); }
 
 static VALUE
 mr_enc_s_list(VALUE klass, SEL sel)
@@ -192,6 +193,7 @@ add_encoding(
     encoding->methods.length = str_undefined_length;
     encoding->methods.bytesize = str_undefined_bytesize;
     encoding->methods.get_character_boundaries = str_undefined_get_character_boundaries;
+    encoding->methods.offset_in_bytes_to_index = str_undefined_offset_in_bytes_to_index
 
     switch (encoding_type) {
 	case ENCODING_TYPE_SPECIAL:
