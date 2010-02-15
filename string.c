@@ -905,6 +905,9 @@ str_offset_in_bytes_for_string(string_t *self, string_t *searched, long start_of
 static long
 str_index_for_string(string_t *self, string_t *searched, long start_index, bool ucs2_mode)
 {
+    str_must_have_compatible_encoding(self, searched);
+    str_make_same_format(self, searched);
+
     long start_offset_in_bytes;
     if (start_index == 0) {
 	start_offset_in_bytes = 0;
